@@ -1,0 +1,53 @@
+
+════════════════════════════════════════════════════
+                  IMPACT REPORT
+════════════════════════════════════════════════════
+
+📍 Selected node
+────────────────────────────────────────────────────
+   MiniProject\Application\Services\UserService
+   Type: class
+   Name: UserService
+   Location: Application/Services/UserService.php:9-37
+
+🧠 Compact summary
+────────────────────────────────────────────────────
+   node_kind: class
+   relation_summary: in_calls=0 out_calls=0 extends=1 implements=0 depends_out=2 depends_in=1
+   incoming_by_type: -
+   outgoing_by_type: -
+   unresolved calls: 0
+   resolved interface calls: 0
+   inheritance_chain: MiniProject\Application\Services\UserService -> MiniProject\Application\Services\BaseUserService
+
+📦 Relationships
+────────────────────────────────────────────────────
+   EXTENDS:
+     ↳ MiniProject\Application\Services\BaseUserService
+       name: BaseUserService
+       location: Application/Services/BaseUserService.php
+
+🧩 Dependencies (DEPENDS_ON)
+────────────────────────────────────────────────────
+   OUTGOING DEPENDS_ON:
+     ↳ MiniProject\Infrastructure\Repositories\UserRepository
+       name: UserRepository
+       location: Infrastructure/Repositories/UserRepository.php
+     ↳ MiniProject\Application\Services\EventService
+       name: EventService
+       location: Application/Services/EventService.php
+   INCOMING DEPENDS_ON:
+     ↳ MiniProject\Presentation\Controllers\UserController
+       name: UserController
+       location: Presentation/Controllers/UserController.php
+
+
+⬅️  Who uses me?
+────────────────────────────────────────────────────
+   No incoming CALLS found.
+
+➡️  What do I use?
+────────────────────────────────────────────────────
+   No outgoing CALLS found.
+════════════════════════════════════════════════════
+

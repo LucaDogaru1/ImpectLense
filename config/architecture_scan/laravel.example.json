@@ -1,0 +1,33 @@
+{
+  "architecture": {
+    "ignorePatterns": [
+      "*Repository::* -> *::query",
+      "*Repository::* -> *::create",
+      "*Repository::* -> *::update",
+      "*Repository::* -> *::delete",
+      "*Repository::* -> *::save",
+
+      "*Service::* -> Illuminate\\Http\\Request::*",
+      "*Service::* -> Illuminate\\Support\\Facades\\Http::*",
+      "*Service::* -> Http::*",
+
+      "*Service::* -> SpOTTBackend\\Http\\Requests\\*::*",
+      "*Service::* -> SpOTTFrontend\\Http\\Requests\\*::*",
+
+      "*Source::* -> Http::*",
+      "*Connector::* -> Http::*",
+      "*Proxy::* -> Http::*",
+      "*Resource::* -> Http::*",
+
+      "*::fakeMe -> Http::*",
+      "*::generateResponse -> Http::*",
+
+      "*::boot -> *::observe"
+    ],
+
+    "allow": [
+      "Infrastructure -> Domain",
+      "Repository -> Domain"
+    ]
+  }
+}

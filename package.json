@@ -1,0 +1,44 @@
+{
+  "name": "impactlens",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "scan": "tsx src/cli/scan.ts",
+    "analyze:impact": "tsx src/cli/commands/impact.ts",
+    "analyze:cycles": "tsx src/cli/commands/cycles.ts",
+    "analyze:dead-code": "tsx src/cli/commands/deadCode.ts",
+    "analyze:architecture": "tsx src/cli/commands/architecture.ts",
+    "analyze:hotspots": "tsx src/cli/commands/hotspots.ts",
+    "analyze:change-impact": "tsx src/cli/commands/changeImpact.ts",
+    "analyze:ai-context": "tsx src/cli/commands/aiContext.ts",
+    "analyze:ticket": "tsx src/cli/commands/ticket.ts",
+    "test:ticket": "tsx src/analyzers/ticket/ticketAnalyzerV3.test.ts",
+    "test:ticket-session": "tsx src/analyzers/ticket/ticketSession.test.ts",
+    "test:ticket-briefing": "tsx src/analyzers/ticket/ticketBriefing.test.ts",
+    "test:field-layers": "tsx src/analyzers/ticket/fieldLayerAnalysis.test.ts",
+    "analyze:risk": "tsx src/cli/commands/risk.ts",
+    "smoke:real-db": "npm run smoke:real-db:fast",
+    "smoke:real-db:fast": "npm run analyze:cycles -- sqlite/Graph.sqlite --limit=10 && npm run analyze:architecture -- sqlite/Graph.sqlite --include-depends-on --ignore-likely-false-positives --limit=10 && npm run analyze:hotspots -- sqlite/Graph.sqlite --limit=10 && npm run analyze:risk -- sqlite/Graph.sqlite --limit=10 && npm run analyze:ai-context -- sqlite/Graph.sqlite \"SpOTTBackend\\Services\\Content\\Search\\SearchService::buildParamsFromRequest\" --compact",
+    "smoke:real-db:full": "npm run smoke:real-db:fast && npm run analyze:dead-code -- sqlite/Graph.sqlite --limit=10 && npm run analyze:change-impact -- sqlite/Graph.sqlite \"SpOTTBackend\\Services\\Content\\Search\\SearchService::buildParamsFromRequest\" --depth=2 --limit=10"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "chalk": "^5.6.2",
+    "tree-sitter": "^0.21.1",
+    "tree-sitter-javascript": "^0.21.4",
+    "tree-sitter-php": "^0.22.8"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.19.19",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.22.4",
+    "typescript": "^5.9.3"
+  }
+}
