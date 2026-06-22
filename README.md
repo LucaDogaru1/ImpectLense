@@ -98,6 +98,19 @@ Agents: see [.cursor/skills/impactlens/SKILL.md](.cursor/skills/impactlens/SKILL
 
 **Cross-language:** when JS `HTTP_REQUEST` paths match PHP routes, you get UI → endpoint → controller chains in the graph and in ticket briefings.
 
+## Language support
+
+| Language | Status |
+|----------|--------|
+| **PHP** (Laravel-oriented) | Primary — most mature scanner and analysis support |
+| **JavaScript / Vue / TypeScript** | Beta — imports, calls, components, and HTTP linking supported |
+
+Full matrix, file types, gaps, and contribution notes: **[docs/support.md](docs/support.md)**.
+
+The PHP pipeline (`src/scanner/php/`) is currently the most mature and extensively tested part of the project.
+
+JavaScript/Vue support was developed with significant AI assistance and is still evolving. It is used successfully for full-stack ticket analysis and flow-path generation, but should be considered less battle-tested than the PHP scanner.
+
 ## Honest limits
 
 ImpactLens is strong on **navigation and blast radius**, not on proving correctness.
@@ -127,6 +140,7 @@ Details: [docs/config.md](docs/config.md)
 | Doc | Contents |
 |-----|----------|
 | **[Quickstart](docs/quickstart.md)** | Install, scan, ticket analysis |
+| **[Language support](docs/support.md)** | PHP vs JS/Vue status, gaps, contributions |
 | **[Config](docs/config.md)** | All config types |
 | [Commands](docs/commands.md) | Full CLI reference |
 | [Scan config](docs/scan-config.md) | Path aliases, HTTP linking |
