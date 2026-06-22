@@ -9,7 +9,7 @@ It is **static analysis** (tree-sitter, no runtime). Scan once into `Graph.sqlit
 ## What it does
 
 1. **Build a graph** — classes, methods, Laravel routes, Vue components, imports, calls, and (when resolvable) **HTTP links from frontend to backend**.
-2. **Turn tickets into navigation** — `analyze:ticket` reads a Jira export, issue, or spec file and returns read-first files, symbols, and likely UI → API → backend flows.
+2. **Turn ticket text into a prioritized code-reading plan** — `analyze:ticket` reads a Jira export, issue, or spec file and returns read-first files, symbols, and likely UI → API → backend flows.
 3. **Answer “what breaks if I change this?”** — callers, callees, blast radius, cycles, layer violations, hotspots.
 
 The main design goal is **compact, navigable context for humans and AI agents** — briefings and `--compact` reports instead of dumping whole repos into chat.
@@ -121,8 +121,6 @@ None of that makes the tool useless — it means **scan quality and intent matte
 | `config/architecture_scan/*.json` | This repo | `analyze:architecture --architecture-config=…` |
 
 Details: [docs/config.md](docs/config.md)
-
-Local-only (gitignored): demo folders `project/`, `jsproject/`, ticket files under `tickets/`, SpOTT preset `config/architecture_scan/spott.json`.
 
 ## Documentation
 

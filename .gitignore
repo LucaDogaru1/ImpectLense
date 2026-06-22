@@ -1,7 +1,5 @@
-# Dependencies
 node_modules/
 
-# Scan outputs (regenerate locally)
 Graph.json
 Graph.*.json
 sqlite/
@@ -10,29 +8,23 @@ sqlite/
 *.sqlite-wal
 *.sqlite-shm
 
-# Logs & env
 *.log
 npm-debug.log*
 .env
 .env.*
 
-# OS / editor
 .DS_Store
 .idea/
 *.swp
 *.swo
 
-# TypeScript build artifacts (if added later)
 dist/
 *.tsbuildinfo
 
-# SpOTT-specific architecture preset (local / private monorepo rules)
 config/architecture_scan/spott.json
 
-# Local demo / test codebases (scan targets for development only)
 jsproject/
 project/
 
-# Local ticket files (convention folder; pass path via --ticket=...)
 tickets/*
 !tickets/README.md
