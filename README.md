@@ -6,6 +6,29 @@ ImpactLens scans codebases into a **queryable code graph**, then maps **ticket t
 
 It is **static analysis** (tree-sitter, no runtime). Scan once into `Graph.sqlite`; run analyzers as often as you need.
 
+## Install
+
+```bash
+# In your project (recommended)
+npm install impactlens
+
+# Or run without installing
+npx impactlens --help
+```
+
+After `npm install`, ImpactLens writes a **Cursor agent skill** to `.cursor/skills/impactlens/SKILL.md` (same playbook as in this repo). Skip with `IMPACTLENS_SKIP_SKILL=1`. Re-run anytime: `npx impactlens install-skill`.
+
+```bash
+# Scan + ticket workflow (global CLI)
+impactlens scan /path/to/repo --lang=both --output=both
+impactlens ticket sqlite/Graph.sqlite --ticket=tickets/issue.txt --scopes=php,js \
+  --answers=ticket_topic:ui,change_includes:cms_ui
+```
+
+Cloning this repo for development? Use `npm install` and the `npm run …` scripts below instead.
+
+**Publish to npm** (maintainers): log in with `npm login`, then `npm publish` from this directory. The package name is `impactlens` (npm is lowercase).
+
 ## What it does
 
 1. **Build a graph** — classes, methods, Laravel routes, Vue components, imports, calls, and (when resolvable) **HTTP links from frontend to backend**.

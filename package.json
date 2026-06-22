@@ -1,9 +1,22 @@
 {
   "name": "impactlens",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Static PHP/JS code graph scanner and ticket-driven briefing CLI for AI-assisted development.",
+  "main": "bin/impactlens.js",
+  "bin": {
+    "impactlens": "bin/impactlens.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "assets/",
+    "scripts/",
+    "config/architecture_scan/laravel.example.json",
+    "docs/",
+    "README.md"
+  ],
   "scripts": {
+    "postinstall": "node scripts/postinstall.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "scan": "tsx src/cli/scan.ts",
     "analyze:impact": "tsx src/cli/commands/impact.ts",
@@ -23,22 +36,42 @@
     "smoke:real-db:fast": "npm run analyze:cycles -- sqlite/Graph.sqlite --limit=10 && npm run analyze:architecture -- sqlite/Graph.sqlite --include-depends-on --ignore-likely-false-positives --limit=10 && npm run analyze:hotspots -- sqlite/Graph.sqlite --limit=10 && npm run analyze:risk -- sqlite/Graph.sqlite --limit=10 && npm run analyze:ai-context -- sqlite/Graph.sqlite \"SpOTTBackend\\Services\\Content\\Search\\SearchService::buildParamsFromRequest\" --compact",
     "smoke:real-db:full": "npm run smoke:real-db:fast && npm run analyze:dead-code -- sqlite/Graph.sqlite --limit=10 && npm run analyze:change-impact -- sqlite/Graph.sqlite \"SpOTTBackend\\Services\\Content\\Search\\SearchService::buildParamsFromRequest\" --depth=2 --limit=10"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "static-analysis",
+    "code-graph",
+    "php",
+    "vue",
+    "laravel",
+    "impact-analysis",
+    "cursor",
+    "cli"
+  ],
+  "author": "Luca Dogaru",
   "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LucaDogaru1/ImpectLense.git"
+  },
+  "homepage": "https://github.com/LucaDogaru1/ImpectLense#readme",
+  "bugs": {
+    "url": "https://github.com/LucaDogaru1/ImpectLense/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "type": "commonjs",
   "dependencies": {
     "better-sqlite3": "^12.11.1",
     "chalk": "^5.6.2",
     "tree-sitter": "^0.21.1",
     "tree-sitter-javascript": "^0.21.4",
-    "tree-sitter-php": "^0.22.8"
+    "tree-sitter-php": "^0.22.8",
+    "tsx": "^4.22.4"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.19.19",
     "ts-node": "^10.9.2",
-    "tsx": "^4.22.4",
     "typescript": "^5.9.3"
   }
 }

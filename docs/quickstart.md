@@ -4,10 +4,23 @@ Everything you need once. No hunting through other docs.
 
 ## 1. Install
 
+**In your project** (recommended — installs the `impactlens` CLI and Cursor agent skill):
+
 ```bash
-cd impactlens
+npm install impactlens
+# skill auto-written to .cursor/skills/impactlens/SKILL.md
+impactlens --help
+```
+
+**Or clone this repo** for development:
+
+```bash
+git clone https://github.com/LucaDogaru1/ImpectLense.git
+cd ImpectLense
 npm install
 ```
+
+Use `impactlens …` after npm install in a project, or `npm run scan` / `npm run analyze:ticket` when working from a clone.
 
 ## 2. Config (only if the target repo uses `@/` imports)
 
