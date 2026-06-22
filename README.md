@@ -111,6 +111,8 @@ The PHP pipeline (`src/scanner/php/`) is currently the most mature and extensive
 
 JavaScript/Vue support was developed with significant AI assistance and is still evolving. It is used successfully for full-stack ticket analysis and flow-path generation, but should be considered less battle-tested than the PHP scanner.
 
+The graph model is language-agnostic, and additional language scanners can be added over time.
+
 ## Honest limits
 
 ImpactLens is strong on **navigation and blast radius**, not on proving correctness.
