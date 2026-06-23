@@ -8,6 +8,49 @@ function testFieldNameMatching(): void {
     assert.ok(fieldNamesMatch("isarchived", "isArchived"));
     assert.ok(fieldNamesMatch("is_archived", "isArchived"));
     assert.ok(!fieldNamesMatch("isarchived", "isDeleted"));
+    assert.ok(fieldNamesMatch("16x9", "editorial.images.16x9"));
+    assert.ok(fieldNamesMatch("editorial.images.1x1", "1x1"));
+}
+
+function testAnalyzeFieldLayersWithNestedApiOutput(): void {
+    const rows = [
+        {
+            id: "response_field:Content:editorial.images.16x9",
+            type: "response_field",
+            name: "editorial.images.16x9",
+            file: "app/Models/Content.php",
+            parent: "Content",
+            description: null,
+            keywords: null,
+        },
+        {
+            id: "Content::toArray",
+            type: "method",
+            name: "toArray",
+            file: "app/Models/Content.php",
+            parent: "Content",
+            description: null,
+            keywords: null,
+        },
+    ];
+
+    const edges = [
+        {
+            from_id: "Content::toArray",
+            to_id: "response_field:Content:editorial.images.16x9",
+            type: "SERIALIZES",
+        },
+    ];
+
+    const ticketText =
+        "Add editorial.images.1x1 like editorial.images.16x9 in the content API response";
+
+    const statuses = analyzeFieldLayers(rows, edges, ["16x9"], ticketText);
+    const status = statuses[0];
+
+    assert.ok(status);
+    assert.ok((status.layers.api_output?.length ?? 0) > 0);
+    assert.ok(!status.missingLayers.includes("api_output"));
 }
 
 function testAnalyzeFieldLayersWithApiOutput(): void {
@@ -72,6 +115,9 @@ function run(): void {
 
     testFieldNameMatching();
     console.log("  ✓ field name matching");
+
+    testAnalyzeFieldLayersWithNestedApiOutput();
+    console.log("  ✓ analyze field layers with nested api output");
 
     testAnalyzeFieldLayersWithApiOutput();
     console.log("  ✓ analyze field layers with api output");

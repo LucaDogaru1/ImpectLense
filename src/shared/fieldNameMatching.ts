@@ -8,15 +8,46 @@ export function canonicalFieldName(value: string): string {
         .replace(/[_-]/g, "");
 }
 
-export function fieldNamesMatch(a: string, b: string): boolean {
-    const left = canonicalFieldName(a);
-    const right = canonicalFieldName(b);
+function fieldPathSegments(value: string): string[] {
+    return value
+        .trim()
+        .toLowerCase()
+        .split(".")
+        .map(segment => canonicalFieldName(segment))
+        .filter(Boolean);
+}
 
-    if (!left || !right) {
+export function fieldNamesMatch(a: string, b: string): boolean {
+    const left = a.trim().toLowerCase();
+    const right = b.trim().toLowerCase();
+
+    if (canonicalFieldName(left) === canonicalFieldName(right)) {
+        return true;
+    }
+
+    const leftSegments = fieldPathSegments(left);
+    const rightSegments = fieldPathSegments(right);
+
+    if (leftSegments.length === 0 || rightSegments.length === 0) {
         return false;
     }
 
-    return left === right;
+    if (left.includes(".") && right.includes(".")) {
+        const leftCanonical = leftSegments.join(".");
+        const rightCanonical = rightSegments.join(".");
+        return (
+            leftCanonical === rightCanonical ||
+            leftCanonical.endsWith(`.${rightCanonical}`) ||
+            rightCanonical.endsWith(`.${leftCanonical}`)
+        );
+    }
+
+    const shortSegments = left.includes(".") ? rightSegments : leftSegments;
+    const longSegments = left.includes(".") ? leftSegments : rightSegments;
+    const shortKey = shortSegments[shortSegments.length - 1];
+    const longKey = longSegments[longSegments.length - 1];
+
+    return shortKey === longKey && shortKey.length >= 2;
 }
 
 export function haystackContainsField(haystack: string, field: string): boolean {
@@ -25,10 +56,20 @@ export function haystackContainsField(haystack: string, field: string): boolean 
         return false;
     }
 
-    const tokens = haystack
-        .toLowerCase()
-        .split(/[^a-z0-9]+/)
+    const normalizedHaystack = haystack.toLowerCase();
+    const normalizedField = field.trim().toLowerCase();
+
+    if (normalizedHaystack.includes(normalizedField)) {
+        return true;
+    }
+
+    const tokens = normalizedHaystack
+        .split(/[^a-z0-9._]+/)
         .filter(Boolean);
+
+    if (tokens.some(token => fieldNamesMatch(token, field))) {
+        return true;
+    }
 
     return tokens.some(token => canonicalFieldName(token) === canonical);
 }

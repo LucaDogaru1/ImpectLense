@@ -1,37 +1,14 @@
 import { TicketAnalyzerResult } from "./ticketAnalyzerV3";
-import { TicketFlowPath } from "./ticketFlowPaths";
+import { filterFlowPathsForBriefing, TicketFlowPath } from "./ticketFlowPaths";
 import { formatIntentLabel } from "./ticketIntent";
 import { TicketBriefing, TicketProbeResult, TicketSessionResolved } from "./ticketSessionTypes";
+import {
+    countTokenOverlap,
+    extractDistinctiveTicketTokens,
+    pathSegmentTokenOverlap,
+} from "./ticketTextTokens";
 
 const STRONG_UI_MATCH_THRESHOLD = 5;
-
-const GENERIC_UI_TOKENS = new Set([
-    "ticket",
-    "event",
-    "file",
-    "content",
-    "status",
-    "type",
-    "summary",
-    "position",
-    "layout",
-    "display",
-    "enabled",
-    "source",
-    "title",
-    "description",
-    "default",
-    "component",
-    "frontend",
-    "collection",
-    "livestream",
-    "action",
-    "change",
-    "check",
-    "data",
-    "days",
-    "api",
-]);
 
 interface StrongUiPromotionOptions {
     intentOpen?: boolean;
@@ -69,7 +46,7 @@ function isReadFirstCandidate(
     const haystack = `${item.id} ${item.file ?? ""}`;
 
     if (workflowType === "ui") {
-        return /\.vue::|::setup\b|components\/|\/cells\/|\/views\/|pagemanager|hero|preset|slide|controller|resource/i.test(
+        return /\.vue::|::setup\b|\/cells\/|\/components\/|\/views\/|pagemanager|controller|resource/i.test(
             haystack
         );
     }
@@ -83,28 +60,7 @@ function isVueOrJsTarget(item: { id: string; file: string | null }): boolean {
 }
 
 function extractStrongUiTokens(ticketText: string): string[] {
-    const tokens = new Set<string>();
-
-    for (const match of ticketText.match(/\b[a-z][a-z0-9]*:[a-z][a-z0-9]*\b/gi) ?? []) {
-        const [left, right] = match.toLowerCase().split(":");
-        if (left) tokens.add(left);
-        if (right) tokens.add(right);
-        tokens.add(match.toLowerCase().replace(":", ""));
-    }
-
-    for (const match of ticketText.match(/\b(?:hero|teaser|preset|slide)[a-z0-9]*\b/gi) ?? []) {
-        if (match.length >= 4) {
-            tokens.add(match.toLowerCase());
-        }
-    }
-
-    for (const match of ticketText.toLowerCase().match(/\b[a-z]{4,}\b/g) ?? []) {
-        if (/hero|teaser|preset|layout|position|component|frontend|cms|summary/.test(match)) {
-            tokens.add(match);
-        }
-    }
-
-    return [...tokens].filter(token => !GENERIC_UI_TOKENS.has(token) || /hero|teaser|preset|slide/.test(token));
+    return extractDistinctiveTicketTokens(ticketText);
 }
 
 function scoreStrongUiMatch(
@@ -112,21 +68,8 @@ function scoreStrongUiMatch(
     tokens: string[]
 ): number {
     const haystack = `${item.id} ${item.file ?? ""}`.toLowerCase();
-    let score = 0;
-
-    for (const token of tokens) {
-        if (token.length < 4) {
-            continue;
-        }
-
-        if (haystack.includes(token)) {
-            score += token.length >= 8 ? 4 : 2;
-        }
-    }
-
-    if (/heroteaser|hero\/|\/hero/i.test(haystack) && tokens.some(token => token.includes("hero"))) {
-        score += 6;
-    }
+    let score = countTokenOverlap(haystack, tokens);
+    score += pathSegmentTokenOverlap(item.file, tokens);
 
     if (/\.vue::/.test(haystack)) {
         score += 1;
@@ -194,7 +137,13 @@ export function findStrongUiReadFirstCandidates(
         }));
 }
 
-function mergeReadFirst(primary: ReadFirstItem[], secondary: ReadFirstItem[], limit = 5): ReadFirstItem[] {
+function mergeReadFirst(
+    primary: ReadFirstItem[],
+    secondary: ReadFirstItem[],
+    limit = 5,
+    ticketText?: string,
+    scoreById?: Map<string, number>
+): ReadFirstItem[] {
     const seen = new Set<string>();
     const merged: ReadFirstItem[] = [];
 
@@ -206,12 +155,94 @@ function mergeReadFirst(primary: ReadFirstItem[], secondary: ReadFirstItem[], li
         seen.add(item.id);
         merged.push(item);
 
-        if (merged.length >= limit) {
+        if (merged.length >= limit * 3) {
             break;
         }
     }
 
-    return merged;
+    return collapseReadFirstByFile(merged, limit, ticketText, scoreById);
+}
+
+function symbolEntryPriority(id: string): number {
+    if (/@prop:|@emit:|@slot:/i.test(id)) {
+        return 1;
+    }
+
+    if (/::setup\b|::mounted\b|::created\b/i.test(id)) {
+        return 2;
+    }
+
+    const vueTail = id.match(/\.vue::([^@]+)$/i)?.[1];
+    if (vueTail && !vueTail.includes("::")) {
+        return 10;
+    }
+
+    return 5;
+}
+
+function componentBasename(id: string, file: string | null): string | null {
+    const fromId = id.split("::").pop()?.split("@")[0]?.toLowerCase();
+    if (fromId && fromId.length >= 4) {
+        return fromId;
+    }
+
+    const fromFile = file?.split(/[/\\]/).pop()?.replace(/\.(vue|tsx?|jsx?)$/i, "").toLowerCase();
+    return fromFile && fromFile.length >= 4 ? fromFile : null;
+}
+
+export function collapseReadFirstByFile(
+    items: ReadFirstItem[],
+    limit = 5,
+    ticketText?: string,
+    scoreById?: Map<string, number>
+): ReadFirstItem[] {
+    const tokens = ticketText ? extractDistinctiveTicketTokens(ticketText) : [];
+    const bestByKey = new Map<string, ReadFirstItem>();
+
+    for (const item of items) {
+        const key = item.file ?? item.id;
+        const existing = bestByKey.get(key);
+
+        if (!existing || symbolEntryPriority(item.id) > symbolEntryPriority(existing.id)) {
+            bestByKey.set(key, item);
+        }
+    }
+
+    const collapsed: ReadFirstItem[] = [];
+    const seenKeys = new Set<string>();
+    const seenBasenames = new Map<string, number>();
+
+    for (const item of items) {
+        const key = item.file ?? item.id;
+
+        if (seenKeys.has(key)) {
+            continue;
+        }
+
+        const basename = componentBasename(item.id, item.file);
+        if (basename) {
+            const itemScore =
+                (scoreById?.get(item.id) ?? 0) +
+                pathSegmentTokenOverlap(item.file, tokens) * 10 +
+                countTokenOverlap(`${item.id} ${item.file ?? ""}`, tokens);
+
+            const existingScore = seenBasenames.get(basename);
+            if (existingScore !== undefined && existingScore >= itemScore) {
+                continue;
+            }
+
+            seenBasenames.set(basename, itemScore);
+        }
+
+        seenKeys.add(key);
+        collapsed.push(bestByKey.get(key)!);
+
+        if (collapsed.length >= limit) {
+            break;
+        }
+    }
+
+    return collapsed;
 }
 
 function formatFlowPathLines(flowPaths: TicketFlowPath[]): string[] {
@@ -233,7 +264,7 @@ export function buildTicketBriefing(
 ): TicketBriefing {
     const structuralIds = new Set(probe.structuralCandidates.map(item => item.id));
     const workflowType = resolved.lockedWorkflow ?? analysis.workflow.type;
-    const flowPaths = analysis.flowPaths ?? [];
+    const rawFlowPaths = analysis.flowPaths ?? [];
 
     const prioritizedTargets = [
         ...analysis.investigationTargets.filter(item => structuralIds.has(item.id)),
@@ -251,11 +282,21 @@ export function buildTicketBriefing(
 
     const uiSources = [...analysis.investigationTargets, ...analysis.matchedFrontend];
     const intentOpen = resolved.confirmedTopic === "unsure" || resolved.changeIncludes === "unsure";
-    const strongUiMatches = findStrongUiReadFirstCandidates(analysis.query, uiSources, flowPaths, {
+    const strongUiMatches = findStrongUiReadFirstCandidates(analysis.query, uiSources, rawFlowPaths, {
         intentOpen,
         workflowType,
     });
-    const readFirst = mergeReadFirst(strongUiMatches, workflowFiltered, 5);
+    const scoreById = new Map(
+        [...analysis.investigationTargets, ...analysis.matchedFrontend].map(item => [item.id, item.score])
+    );
+    const readFirst = mergeReadFirst(strongUiMatches, workflowFiltered, 5, analysis.query, scoreById);
+    const flowPaths = filterFlowPathsForBriefing(rawFlowPaths, {
+        ticketText: analysis.query,
+        workflowType,
+        seedNodeIds: readFirst.map(item => item.id),
+        seedFiles: readFirst.map(item => item.file),
+    }, 5);
+    const relatedSymbols = analysis.relatedSymbols.slice(0, 5);
 
     const skip = analysis.claims.doNotStartHere.slice(0, 5).map(item => ({
         id: item.id,
@@ -316,6 +357,10 @@ export function buildTicketBriefing(
     const verifyLines = verify.length === 0 ? ["- None"] : verify.map(item => `- ${item}`);
     const warningLines = warnings.length === 0 ? ["- None"] : warnings.map(item => `- ${item}`);
     const flowPathLines = formatFlowPathLines(flowPaths);
+    const relatedLines =
+        relatedSymbols.length === 0
+            ? ["- None"]
+            : relatedSymbols.map(item => `- \`${item.id}\` — ${item.reason}`);
 
     const filesToOpen = uniqueFiles(readFirst).slice(0, 5);
 
@@ -329,6 +374,8 @@ export function buildTicketBriefing(
         `- Surface scope: **${surfaceLabel}**`,
         `- Graph scopes: **${scopeLabel}**`,
         `- Navigation confidence: ${analysis.navigationConfidence}`,
+        `- Entrypoint confidence: ${analysis.entrypointConfidence}`,
+        `- Graph coverage confidence: ${analysis.graphCoverageConfidence}`,
         `- Implementation confidence: ${analysis.implementationConfidence}`,
         `- Probe readiness: ${probe.readinessScore.toFixed(2)}`,
         "",
@@ -337,6 +384,9 @@ export function buildTicketBriefing(
         "",
         "## Likely flow paths",
         ...flowPathLines,
+        "",
+        "## Related symbols (graph)",
+        ...relatedLines,
         "",
         "## Files to open",
         ...(filesToOpen.length === 0 ? ["- None"] : filesToOpen.map(file => `- ${file}`)),
@@ -364,6 +414,7 @@ export function buildTicketBriefing(
         markdown,
         readFirst,
         flowPaths,
+        relatedSymbols,
         skip,
         verify,
         warnings,

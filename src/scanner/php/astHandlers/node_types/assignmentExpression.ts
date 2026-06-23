@@ -2,15 +2,20 @@ import Parser from "tree-sitter";
 import { WalkContext } from "../../walk/context";
 import { resolveClassName } from "../../resolvers/resolveClassName";
 import { graph } from "../../../../graph/graph";
+import { ensureModelField } from "../../semantic/fieldNodes";
+import { extractNestedArrayFieldEntries } from "../../semantic/nestedArrayFields";
 
 export function assignmentExpression(
     rootNodeChild: Parser.SyntaxNode,
-    context: WalkContext
+    context: WalkContext,
+    file: string
 ): void {
     const left = rootNodeChild.childForFieldName("left");
     const right = rootNodeChild.childForFieldName("right");
 
     if (!left || !right) return;
+
+    recordModelPropertyArrayShape(left, right, context, file);
 
     if (right.type !== "object_creation_expression") return;
 
@@ -63,6 +68,63 @@ export function assignmentExpression(
             });
         }
     }
+}
+
+function recordModelPropertyArrayShape(
+    left: Parser.SyntaxNode,
+    right: Parser.SyntaxNode,
+    context: WalkContext,
+    file: string
+): void {
+    if (!context.currentClass || !/\/models\//i.test(file.replace(/\\/g, "/"))) {
+        return;
+    }
+
+    const propertyName = left.text.match(/^\$this->([a-zA-Z_][a-zA-Z0-9_]*)$/)?.[1];
+    if (!propertyName) {
+        return;
+    }
+
+    if (
+        right.type !== "array_creation_expression" &&
+        right.type !== "short_array_creation_expression"
+    ) {
+        const arrayNode = resolveArrayLiteralNode(right);
+        if (!arrayNode) {
+            return;
+        }
+
+        ensureModelField(context.currentClass, propertyName, file);
+
+        for (const entry of extractNestedArrayFieldEntries(arrayNode, propertyName)) {
+            ensureModelField(context.currentClass, entry.path, file);
+        }
+        return;
+    }
+
+    ensureModelField(context.currentClass, propertyName, file);
+
+    for (const entry of extractNestedArrayFieldEntries(right, propertyName)) {
+        ensureModelField(context.currentClass, entry.path, file);
+    }
+}
+
+function resolveArrayLiteralNode(node: Parser.SyntaxNode): Parser.SyntaxNode | null {
+    if (
+        node.type === "array_creation_expression" ||
+        node.type === "short_array_creation_expression"
+    ) {
+        return node;
+    }
+
+    for (const child of node.namedChildren) {
+        const resolved = resolveArrayLiteralNode(child);
+        if (resolved) {
+            return resolved;
+        }
+    }
+
+    return null;
 }
 
 function normalizeAssignedTarget(value: string): string {

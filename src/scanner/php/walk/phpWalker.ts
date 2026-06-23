@@ -71,7 +71,7 @@ export default function walk(rootNode: Parser.SyntaxNode, file:string, context: 
                 resolveParameters(child, childContext);
                 break;
             case 'assignment_expression':
-                assignmentExpression(child, childContext);
+                assignmentExpression(child, childContext, file);
                 dataFlowAssignment(child, childContext);
                 break;
             case "scoped_call_expression":

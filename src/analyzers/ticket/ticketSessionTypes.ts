@@ -77,6 +77,7 @@ export interface TicketBriefing {
     markdown: string;
     readFirst: Array<{ id: string; file: string | null; reason: string }>;
     flowPaths: Array<{ path: string; complete: boolean; gap?: string }>;
+    relatedSymbols: Array<{ id: string; file: string | null; reason: string }>;
     skip: Array<{ id: string; reason: string }>;
     verify: string[];
     warnings: string[];

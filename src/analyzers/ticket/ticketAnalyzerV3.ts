@@ -22,6 +22,13 @@ import {
     buildTicketFlowPaths,
     type TicketFlowPath,
 } from "./ticketFlowPaths";
+import {
+    applyWorkflowTargetRerank,
+    buildRelatedSymbols,
+    calculateEntrypointConfidence,
+    calculateGraphCoverageConfidence,
+} from "./ticketTargetRerank";
+import { extractDistinctiveTicketTokens, pathSegmentTokenOverlap } from "./ticketTextTokens";
 
 type SQLiteDatabase = InstanceType<typeof Database>;
 
@@ -49,6 +56,9 @@ export interface TicketAnalyzerResult {
     confidence: number;
     navigationConfidence: number;
     implementationConfidence: number;
+    entrypointConfidence: number;
+    graphCoverageConfidence: number;
+    relatedSymbols: Array<{ id: string; file: string | null; reason: string }>;
     claims: TicketClaims;
     investigationTargets: TicketMatchedNode[];
     implementationHints: string[];
@@ -224,6 +234,20 @@ const LOW_VALUE_TOKENS = new Set([
     "cms",
     "check",
     "flag",
+    "url",
+    "string",
+    "example",
+    "https",
+    "accepts",
+    "existing",
+    "which",
+    "used",
+    "session",
+    "user",
+    "name",
+    "names",
+    "returns",
+    "stored",
 ]);
 
 const ACTION_TOKENS = new Set([
@@ -417,18 +441,24 @@ export function analyzeTicket(
         ticketText
     );
 
-    const investigationTargets = buildInvestigationTargets(
-        mergeInvestigationCandidates(
-            workflow.type,
-            rerankedMethods,
-            rerankedIntegrations,
-            rerankedFrontend
+    const investigationTargets = applyWorkflowTargetRerank(
+        buildInvestigationTargets(
+            mergeInvestigationCandidates(
+                workflow.type,
+                rerankedMethods,
+                rerankedIntegrations,
+                rerankedFrontend,
+                ticketText
+            ),
+            rerankedRequestFields,
+            rerankedEndpoints,
+            excludedTargets,
+            limit,
+            workflow.type
         ),
-        rerankedRequestFields,
-        rerankedEndpoints,
-        excludedTargets,
-        limit,
-        workflow.type
+        workflow,
+        ticketText,
+        fieldTerms
     );
 
     const allMatches = [
@@ -472,12 +502,23 @@ export function analyzeTicket(
         workflow
     );
 
+    const entrypointConfidence = calculateEntrypointConfidence(investigationTargets, workflow);
+    const graphCoverageConfidence = calculateGraphCoverageConfidence(claims.fieldStatuses);
+
     const implementationConfidence = calculateImplementationConfidence(
         navigationConfidence,
         claims,
         workflow,
         truncated,
-        rerankedMethods
+        rerankedMethods,
+        entrypointConfidence
+    );
+
+    const relatedSymbols = buildRelatedSymbols(
+        investigationTargets.slice(0, 3).map(item => item.id),
+        claims.fieldStatuses,
+        allEdges,
+        5
     );
 
     const implementationHints = buildImplementationHints(
@@ -509,6 +550,9 @@ export function analyzeTicket(
         confidence: navigationConfidence,
         navigationConfidence,
         implementationConfidence,
+        entrypointConfidence,
+        graphCoverageConfidence,
+        relatedSymbols,
         claims,
         investigationTargets,
         implementationHints,
@@ -528,7 +572,8 @@ function mergeInvestigationCandidates(
     workflowType: DominantWorkflow["type"],
     methods: TicketMatchedNode[],
     integrations: TicketMatchedNode[],
-    frontend: TicketMatchedNode[] = []
+    frontend: TicketMatchedNode[] = [],
+    ticketText = ""
 ): TicketMatchedNode[] {
     if (workflowType === "queue") {
         const integrationEntrypoints = pickBestIntegrationPerClass(
@@ -587,10 +632,29 @@ function mergeInvestigationCandidates(
     }
 
     if (workflowType === "import") {
+        const ticketLower = ticketText.toLowerCase();
+        const cmsUiImport = /\b(cms|detail page|display in|show in the cms|detail view)\b/i.test(ticketLower);
+
         const importHandlers = integrations.filter(item =>
             item.type === "integration_entrypoint" && item.name === "import_handler"
         );
-        return dedupeMatchedNodes([...importHandlers, ...methods]);
+
+        const pipelineMethods = methods.filter(item => {
+            const haystack = `${item.id} ${item.file ?? ""}`.toLowerCase();
+            const looksLikePipeline = /import|parser|feed|externalmatch|transform|xml|providercategory/i.test(haystack);
+            const looksLikeCmsImportUi = /\/views\/.*\/import/i.test(haystack);
+            return looksLikePipeline && (!looksLikeCmsImportUi || cmsUiImport);
+        });
+
+        const cmsImportViews = frontend.filter(item =>
+            /\/views\/.*\/import/i.test(`${item.id} ${item.file ?? ""}`)
+        );
+
+        if (cmsUiImport) {
+            return dedupeMatchedNodes([...importHandlers, ...pipelineMethods, ...cmsImportViews, ...methods]);
+        }
+
+        return dedupeMatchedNodes([...importHandlers, ...pipelineMethods, ...methods]);
     }
 
     if (workflowType === "ui") {
@@ -995,6 +1059,11 @@ const AMBIGUOUS_SINGLE_MATCH_TOKENS = new Set([
     "stored",
     "content",
     "contents",
+    "url",
+    "string",
+    "example",
+    "name",
+    "accepts",
 ]);
 function strongMatchedTokens(tokens: string[]): string[] {
     return tokens.filter(token => {
@@ -1500,6 +1569,7 @@ function findMatchingNodes(
             scoreTokenCombination(row, matchedTokens, fieldTerms, intent) +
             endpointPenalty(row, intent) +
             scoreContextQuality(row, matchedTokens) +
+            pathSegmentTokenOverlap(row.file, extractDistinctiveTicketTokens(ticketText)) * 12 +
             workflowBoost.boost +
             scoreQueueInfrastructureBoost(row, workflow, queueInfrastructure) -
             falsePositive.penalty;
@@ -2073,9 +2143,10 @@ function calculateImplementationConfidence(
     claims: TicketClaims,
     workflow: DominantWorkflow,
     truncated: boolean,
-    methods: TicketMatchedNode[]
+    methods: TicketMatchedNode[],
+    entrypointConfidence = 0
 ): number {
-    let score = navigationConfidence * 0.55;
+    let score = navigationConfidence * 0.35 + entrypointConfidence * 0.35;
 
     if (workflow.confidence >= 0.8) score += 0.1;
     if (claims.infrastructureGaps.length === 0) score += 0.1;

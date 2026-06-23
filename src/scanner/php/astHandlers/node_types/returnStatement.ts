@@ -1,14 +1,14 @@
 import Parser from "tree-sitter";
 import { WalkContext } from "../../walk/context";
+import { cleanPhpString, ensureModelField, ensureResponseField, isLikelyFieldName, linkSerializes } from "../../semantic/fieldNodes";
 import {
-    cleanPhpString,
-    ensureModelField,
-    ensureResponseField,
-    isLikelyFieldName,
-    linkSerializes,
-} from "../../semantic/fieldNodes";
+    collectModelFieldPathsForProperty,
+    extractNestedArrayFieldEntries,
+    extractPropertyAccessPath,
+    extractThisPropertyName,
+    NestedFieldEntry,
+} from "../../semantic/nestedArrayFields";
 import { graph } from "../../../../graph/graph";
-import { fieldNamesMatch } from "../../../../shared/fieldNameMatching";
 
 export function returnStatementType(
     node: Parser.SyntaxNode,
@@ -21,35 +21,122 @@ export function returnStatementType(
         return;
     }
 
-    const arrayNodes = collectArrayLiterals(node);
+    const arrayNodes = collectRootReturnArrays(node);
     if (arrayNodes.length === 0) return;
 
+    const emitted = new Set<string>();
+
     for (const arrayNode of arrayNodes) {
-        for (const entry of extractArrayEntries(arrayNode)) {
-            const responseFieldNodeId = ensureResponseField(
+        for (const entry of extractResponseFieldEntries(arrayNode, context.currentClass)) {
+            emitResponseFieldEntry(
                 context.currentClass,
-                entry.key,
-                file
+                context.currentMethod,
+                entry,
+                file,
+                emitted
             );
-            linkSerializes(context.currentMethod, responseFieldNodeId);
-
-            if (entry.modelProperty) {
-                const modelFieldNodeId = ensureModelField(
-                    context.currentClass,
-                    entry.modelProperty,
-                    file
-                );
-
-                graph.edges.set(`${responseFieldNodeId}->${modelFieldNodeId}`, {
-                    from: responseFieldNodeId,
-                    to: modelFieldNodeId,
-                    type: "REFERENCES",
-                    confidence: 0.9,
-                    reason: "API response key maps to model property",
-                });
-            }
         }
     }
+}
+
+function emitResponseFieldEntry(
+    className: string,
+    methodId: string,
+    entry: NestedFieldEntry,
+    file: string,
+    emitted: Set<string>
+): void {
+    if (emitted.has(entry.path)) {
+        return;
+    }
+
+    emitted.add(entry.path);
+
+    const responseFieldNodeId = ensureResponseField(className, entry.path, file);
+    linkSerializes(methodId, responseFieldNodeId);
+
+    if (entry.modelProperty) {
+        const modelFieldNodeId = ensureModelField(className, entry.modelProperty, file);
+
+        graph.edges.set(`${responseFieldNodeId}->${modelFieldNodeId}`, {
+            from: responseFieldNodeId,
+            to: modelFieldNodeId,
+            type: "REFERENCES",
+            confidence: 0.9,
+            reason: "API response key maps to model property",
+        });
+    }
+}
+
+function isNestedArrayValue(valueNode: Parser.SyntaxNode | null | undefined): valueNode is Parser.SyntaxNode {
+    if (!valueNode) {
+        return false;
+    }
+
+    return (
+        valueNode.type === "array_creation_expression" ||
+        valueNode.type === "short_array_creation_expression"
+    );
+}
+
+function extractResponseFieldEntries(
+    arrayNode: Parser.SyntaxNode,
+    className: string
+): NestedFieldEntry[] {
+    const entries: NestedFieldEntry[] = [];
+
+    for (const child of arrayNode.namedChildren) {
+        if (child.type !== "array_element_initializer") {
+            continue;
+        }
+
+        const keyNode = child.namedChildren[0];
+        if (!keyNode) {
+            continue;
+        }
+
+        const key = cleanPhpString(keyNode.text);
+        if (!isLikelyFieldName(key)) {
+            continue;
+        }
+
+        const valueNode = child.namedChildren[child.namedChildren.length - 1];
+        const valueText = valueNode?.text ?? "";
+
+        if (isNestedArrayValue(valueNode)) {
+            entries.push({ path: key, modelProperty: null });
+            entries.push(...extractNestedArrayFieldEntries(valueNode, key));
+            continue;
+        }
+
+        const passthroughProperty = extractThisPropertyName(valueText);
+        if (passthroughProperty && !valueText.includes("[")) {
+            entries.push({ path: passthroughProperty, modelProperty: passthroughProperty });
+
+            for (const path of collectModelFieldPathsForProperty(
+                className,
+                passthroughProperty,
+                graph.nodes.values()
+            )) {
+                if (path === passthroughProperty) {
+                    continue;
+                }
+
+                entries.push({
+                    path,
+                    modelProperty: path,
+                });
+            }
+            continue;
+        }
+
+        entries.push({
+            path: key,
+            modelProperty: extractPropertyAccessPath(valueText) ?? extractThisPropertyName(valueText),
+        });
+    }
+
+    return entries;
 }
 
 function isApiOutputContext(methodId: string, classId: string, file: string): boolean {
@@ -72,64 +159,26 @@ function isApiOutputContext(methodId: string, classId: string, file: string): bo
     return /\/models\//i.test(normalizedFile) && methodName === "toarray";
 }
 
-function collectArrayLiterals(node: Parser.SyntaxNode): Parser.SyntaxNode[] {
+function collectRootReturnArrays(node: Parser.SyntaxNode): Parser.SyntaxNode[] {
     const arrays: Parser.SyntaxNode[] = [];
 
-    function walk(current: Parser.SyntaxNode, depth: number): void {
-        if (depth > 8) {
-            return;
-        }
-
-        if (
+    function walk(current: Parser.SyntaxNode, insideArray: boolean): void {
+        const isArray =
             current.type === "array_creation_expression" ||
-            current.type === "short_array_creation_expression"
-        ) {
+            current.type === "short_array_creation_expression";
+
+        if (isArray && !insideArray) {
             arrays.push(current);
         }
 
         for (const child of current.namedChildren) {
-            walk(child, depth + 1);
+            walk(child, insideArray || isArray);
         }
     }
 
     for (const child of node.namedChildren) {
-        walk(child, 0);
+        walk(child, false);
     }
 
     return arrays;
-}
-
-interface ArrayEntry {
-    key: string;
-    modelProperty: string | null;
-}
-
-function extractArrayEntries(arrayNode: Parser.SyntaxNode): ArrayEntry[] {
-    const entries: ArrayEntry[] = [];
-
-    for (const child of arrayNode.namedChildren) {
-        if (child.type !== "array_element_initializer") continue;
-
-        const keyNode = child.namedChildren[0];
-        if (!keyNode) continue;
-
-        const key = cleanPhpString(keyNode.text);
-        if (!isLikelyFieldName(key)) continue;
-
-        const valueNode = child.namedChildren[child.namedChildren.length - 1];
-        const modelProperty = extractThisProperty(valueNode?.text ?? "");
-
-        entries.push({ key, modelProperty });
-    }
-
-    return entries;
-}
-
-function extractThisProperty(valueText: string): string | null {
-    const match = valueText.match(/\$this->([a-zA-Z_][a-zA-Z0-9_]*)/);
-    if (!match?.[1]) {
-        return null;
-    }
-
-    return match[1];
 }

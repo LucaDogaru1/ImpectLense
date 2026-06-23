@@ -86,5 +86,5 @@ export function cleanPhpString(value: string): string {
 }
 
 export function isLikelyFieldName(value: string): boolean {
-    return /^[a-zA-Z_][a-zA-Z0-9_.]*$/.test(value) && value.length >= 2;
+    return /^[a-zA-Z0-9_][a-zA-Z0-9_.]*$/.test(value) && value.length >= 2;
 }

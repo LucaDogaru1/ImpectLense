@@ -3,7 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { formatIntentForEnrichment } from "./ticketIntent";
 import { applyQuestionAnswer, mergeResolved } from "./ticketQuestions";
-import { findStrongUiReadFirstCandidates } from "./ticketBriefing";
+import { collapseReadFirstByFile, findStrongUiReadFirstCandidates } from "./ticketBriefing";
+import { filterFlowPathsForBriefing } from "./ticketFlowPaths";
 
 const projectRoot = path.resolve(__dirname, "../../..");
 
@@ -85,6 +86,73 @@ function testStrongUiPromotion(): void {
     assert.ok(!promoted.some(item => /ProcessExpiredVodObjectJob/i.test(item.id)));
 }
 
+function testCollapseReadFirstByFile(): void {
+    const collapsed = collapseReadFirstByFile([
+        {
+            id: "js:apps/spott-frontend/resources/assets/js/v3/cells/heroTeaser/index.vue::HeroTeaser",
+            file: "apps/spott-frontend/resources/assets/js/v3/cells/heroTeaser/index.vue",
+            reason: "component",
+        },
+        {
+            id: "js:apps/spott-frontend/resources/assets/js/v3/cells/heroTeaser/index.vue::HeroTeaser@prop:description",
+            file: "apps/spott-frontend/resources/assets/js/v3/cells/heroTeaser/index.vue",
+            reason: "prop",
+        },
+        {
+            id: "js:apps/spott-frontend/resources/assets/js/v3/cells/heroTeaser/index.vue::HeroTeaser::setup",
+            file: "apps/spott-frontend/resources/assets/js/v3/cells/heroTeaser/index.vue",
+            reason: "setup",
+        },
+        {
+            id: "js:apps/spott-frontend/resources/assets/js/tailwind/Atoms/EventBasedList/CallToAction.vue::CallToAction",
+            file: "apps/spott-frontend/resources/assets/js/tailwind/Atoms/EventBasedList/CallToAction.vue",
+            reason: "cta",
+        },
+    ], 5);
+
+    assert.equal(collapsed.length, 2);
+    assert.match(collapsed[0]!.id, /::HeroTeaser$/);
+    assert.match(collapsed[1]!.id, /CallToAction$/);
+}
+
+function testFilterFlowPathsForBriefing(): void {
+    const ticket = fs.readFileSync(path.join(projectRoot, "tickets/fe-new.txt"), "utf8");
+    const filtered = filterFlowPathsForBriefing([
+        {
+            path: "index.vue::HeroTeaser",
+            complete: false,
+            gap: "No HTTP_REQUEST edge from this component",
+        },
+        {
+            path: "CallToAction.vue::CallToAction",
+            complete: false,
+            gap: "No HTTP_REQUEST edge from this component",
+        },
+        {
+            path: "GET /users → UserController::index",
+            complete: true,
+        },
+        {
+            path: "GET /admin-audits/api-names → AdminAuditSearchController::getApiNames",
+            complete: true,
+        },
+    ], {
+        ticketText: ticket,
+        workflowType: "ui",
+        seedNodeIds: [
+            "js:apps/spott-frontend/resources/assets/js/v3/cells/heroTeaser/index.vue::HeroTeaser",
+        ],
+        seedFiles: [
+            "apps/spott-frontend/resources/assets/js/v3/cells/heroTeaser/index.vue",
+        ],
+    }, 5);
+
+    assert.ok(filtered.some(item => /HeroTeaser/i.test(item.path)));
+    assert.ok(filtered.some(item => /CallToAction/i.test(item.path)));
+    assert.ok(!filtered.some(item => /UserController/i.test(item.path)));
+    assert.ok(!filtered.some(item => /AdminAuditSearchController/i.test(item.path)));
+}
+
 function run(): void {
     console.log("ticketBriefing tests\n");
 
@@ -96,6 +164,12 @@ function run(): void {
 
     testStrongUiPromotion();
     console.log("  ✓ strong ui promotion");
+
+    testCollapseReadFirstByFile();
+    console.log("  ✓ collapse read first by file");
+
+    testFilterFlowPathsForBriefing();
+    console.log("  ✓ filter flow paths for briefing");
 
     console.log("\nAll ticket briefing tests passed.");
 }

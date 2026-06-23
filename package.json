@@ -1,7 +1,7 @@
 {
   "name": "impactlens",
   "version": "1.0.1",
-  "description": "Static PHP/JS code graph scanner and ticket-driven briefing CLI for AI-assisted development.",
+  "description": "Static code graph scanner and ticket-driven briefing CLI for AI-assisted development. currently only supports php and js/vue",
   "main": "bin/impactlens.js",
   "bin": {
     "impactlens": "bin/impactlens.js"
@@ -30,7 +30,9 @@
     "test:ticket": "tsx src/analyzers/ticket/ticketAnalyzerV3.test.ts",
     "test:ticket-session": "tsx src/analyzers/ticket/ticketSession.test.ts",
     "test:ticket-briefing": "tsx src/analyzers/ticket/ticketBriefing.test.ts",
+    "test:ticket-target-rerank": "tsx src/analyzers/ticket/ticketTargetRerank.test.ts",
     "test:field-layers": "tsx src/analyzers/ticket/fieldLayerAnalysis.test.ts",
+    "test:nested-response-fields": "tsx src/scanner/php/astHandlers/node_types/returnStatement.test.ts",
     "analyze:risk": "tsx src/cli/commands/risk.ts",
     "smoke:real-db": "npm run smoke:real-db:fast",
     "smoke:real-db:fast": "npm run analyze:cycles -- sqlite/Graph.sqlite --limit=10 && npm run analyze:architecture -- sqlite/Graph.sqlite --include-depends-on --ignore-likely-false-positives --limit=10 && npm run analyze:hotspots -- sqlite/Graph.sqlite --limit=10 && npm run analyze:risk -- sqlite/Graph.sqlite --limit=10 && npm run analyze:ai-context -- sqlite/Graph.sqlite \"SpOTTBackend\\Services\\Content\\Search\\SearchService::buildParamsFromRequest\" --compact",
