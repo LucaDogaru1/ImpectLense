@@ -11,6 +11,9 @@ const STOP_WORDS = new Set([
     "primary", "secondary", "supporting", "intended", "multiple", "lines", "chips",
     "button", "buttons", "area", "render", "rendered", "desktop", "mobile", "column",
     "content", "text", "short", "prominently", "configurable", "configuration",
+    "given", "when", "then", "feature", "scenario", "background", "acceptance",
+    "behaviour", "behavior", "story", "criteria", "explicit", "scope", "ops",
+    "authorization", "required", "forbidden", "layer", "layers", "merge", "merged",
 ]);
 
 const GENERIC_TICKET_TOKENS = new Set([

@@ -17,6 +17,7 @@ import {
     TicketProbeResult,
     TicketSessionResolved,
 } from "./ticketSessionTypes";
+import { buildTicketAnchorContext } from "./ticketAnchoring";
 
 type SQLiteDatabase = InstanceType<typeof Database>;
 
@@ -123,9 +124,28 @@ function isLikelyJsNode(row: DbNodeRow): boolean {
 
 function findStructuralCandidates(
     graph: TicketGraphContext,
-    workflowType: string
+    workflowType: string,
+    ticketText = ""
 ): StructuralCandidate[] {
     const candidates: StructuralCandidate[] = [];
+
+    if (workflowType === "api" || workflowType === "mixed") {
+        const anchorContext = buildTicketAnchorContext(ticketText, graph, 8);
+
+        for (const target of anchorContext.anchoredTargets) {
+            candidates.push({
+                id: target.id,
+                type: target.type,
+                file: target.file,
+                role: target.type === "api_endpoint" ? "route_anchor" : "symbol_anchor",
+                reason: target.reason,
+            });
+        }
+
+        if (candidates.length > 0) {
+            return dedupeCandidates(candidates).slice(0, 8);
+        }
+    }
 
     if (workflowType === "queue") {
         for (const row of getNodesOfTypes(graph, ["integration_entrypoint"])) {
@@ -171,16 +191,6 @@ function findStructuralCandidates(
     }
 
     if (workflowType === "api") {
-        for (const row of getNodesOfTypes(graph, ["api_endpoint"])) {
-            candidates.push({
-                id: row.id,
-                type: row.type,
-                file: row.file,
-                role: "endpoint",
-                reason: "API route endpoint",
-            });
-        }
-
         for (const row of getNodesOfTypes(graph, ["integration_entrypoint"])) {
             if (row.name === "api_controller") {
                 candidates.push({
@@ -320,7 +330,7 @@ export function probeTicket(
     const workflowScores = scoreWorkflows(ticketText, tokens);
     const dominantWorkflow = calculateDominantWorkflow(workflowScores);
     const truncated = isTicketTruncated(ticketText);
-    const structuralCandidates = findStructuralCandidates(ctx, dominantWorkflow.type);
+    const structuralCandidates = findStructuralCandidates(ctx, dominantWorkflow.type, ticketText);
     const infrastructureGaps = detectInfrastructureGaps(rows, intent, ticketText, ctx);
     const graphCoverage = inferGraphCoverage(rows, edges, scopes);
     const autoResolved = autoResolveFromGraph(

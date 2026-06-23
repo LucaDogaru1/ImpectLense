@@ -29,6 +29,13 @@ import {
     calculateGraphCoverageConfidence,
 } from "./ticketTargetRerank";
 import { extractDistinctiveTicketTokens, pathSegmentTokenOverlap } from "./ticketTextTokens";
+import {
+    buildTicketAnchorContext,
+    genericBaseConfigPenalty,
+    prependAnchoredTargets,
+    type TicketAnchorContext,
+} from "./ticketAnchoring";
+import { isGenericBaseConfigWithoutAnchor, scoreSymbolAnchorMatch } from "./ticketSymbolAnchors";
 
 type SQLiteDatabase = InstanceType<typeof Database>;
 
@@ -61,6 +68,7 @@ export interface TicketAnalyzerResult {
     relatedSymbols: Array<{ id: string; file: string | null; reason: string }>;
     claims: TicketClaims;
     investigationTargets: TicketMatchedNode[];
+    anchorContext?: TicketAnchorContext;
     implementationHints: string[];
     debug?: TicketAnalyzerDebug;
 }
@@ -248,6 +256,49 @@ const LOW_VALUE_TOKENS = new Set([
     "names",
     "returns",
     "stored",
+    "baseconfig",
+    "baseconfigid",
+    "authorization",
+    "required",
+    "update",
+    "patch",
+    "delete",
+    "given",
+    "when",
+    "then",
+    "feature",
+    "scenario",
+    "merge",
+    "layer",
+    "filters",
+    "filter",
+    "locale",
+    "device",
+    "category",
+    "skeleton",
+    "preview",
+    "values",
+    "forbidden",
+    "subject",
+    "permission",
+    "permissions",
+    "route",
+    "routes",
+    "jwt",
+    "redis",
+    "cache",
+    "invalidation",
+    "tests",
+    "scribe",
+    "operators",
+    "deploy",
+    "structure",
+    "fragments",
+    "object",
+    "inventory",
+    "overlay",
+    "emergency",
+    "hotfix",
 ]);
 
 const ACTION_TOKENS = new Set([
@@ -301,18 +352,23 @@ export function analyzeTicket(
     const intent = extractTicketIntent(ticketText);
     const truncated = isTicketTruncated(ticketText);
 
+    const graph = options?.graph ?? loadTicketGraphContext(db);
+    const anchorContext = buildTicketAnchorContext(ticketText, graph, limit);
+    const anchorSymbols = anchorContext.symbols;
+
     const tokens = [...new Set([
         ...baseTokens,
         ...fieldTerms,
         ...intent.entities,
         ...intent.statuses,
         ...intent.sources,
+        ...anchorSymbols.filter(symbol => symbol.length >= 6),
+        ...anchorContext.routes.flatMap(route => route.path.split("/").filter(segment => segment.length >= 4)),
     ])].filter(token => !NOISE_TOKENS.has(token.toLowerCase()));
 
     const workflowScores = scoreWorkflows(ticketText, tokens);
     const workflow = calculateDominantWorkflow(workflowScores);
 
-    const graph = options?.graph ?? loadTicketGraphContext(db);
     const allSearchableNodes = graph.nodes;
     const allNodes = graph.nodes;
     const allEdges = graph.edges;
@@ -338,7 +394,9 @@ export function analyzeTicket(
         workflow,
         limit * 2,
         tokenDocumentFrequency,
-        ticketText
+        ticketText,
+        undefined,
+        anchorSymbols
     );
 
     const matchedMethods = findMatchingNodes(
@@ -350,7 +408,9 @@ export function analyzeTicket(
         workflow,
         limit * 2,
         tokenDocumentFrequency,
-        ticketText
+        ticketText,
+        undefined,
+        anchorSymbols
     );
 
     const matchedRequestFields = findMatchingNodes(
@@ -362,7 +422,9 @@ export function analyzeTicket(
         workflow,
         limit * 2,
         tokenDocumentFrequency,
-        ticketText
+        ticketText,
+        undefined,
+        anchorSymbols
     );
 
     const matchedIntegrations = findMatchingNodes(
@@ -375,7 +437,8 @@ export function analyzeTicket(
         integrationLimit,
         tokenDocumentFrequency,
         ticketText,
-        queueInfrastructure
+        queueInfrastructure,
+        anchorSymbols
     );
 
     const matchedFrontend = findMatchingNodes(
@@ -387,7 +450,9 @@ export function analyzeTicket(
         workflow,
         limit * 2,
         tokenDocumentFrequency,
-        ticketText
+        ticketText,
+        undefined,
+        anchorSymbols
     );
 
     const proximitySeeds = buildProximitySeedIds(
@@ -420,8 +485,10 @@ export function analyzeTicket(
         ].map(item => item.id)
     );
 
-    const rerankedEndpoints =
-        rerankMatchesWithFlows(boostedEndpoints, relatedFlows).slice(0, limit);
+    const rerankedEndpoints = dedupeMatchedNodes([
+        ...anchorContext.anchoredTargets.filter(item => item.type === "api_endpoint"),
+        ...rerankMatchesWithFlows(boostedEndpoints, relatedFlows),
+    ]).slice(0, limit);
 
     const rerankedMethods =
         rerankMatchesWithFlows(boostedMethods, relatedFlows).slice(0, limit);
@@ -441,24 +508,29 @@ export function analyzeTicket(
         ticketText
     );
 
-    const investigationTargets = applyWorkflowTargetRerank(
-        buildInvestigationTargets(
-            mergeInvestigationCandidates(
-                workflow.type,
-                rerankedMethods,
-                rerankedIntegrations,
-                rerankedFrontend,
-                ticketText
+    const investigationTargets = prependAnchoredTargets(
+        applyWorkflowTargetRerank(
+            buildInvestigationTargets(
+                mergeInvestigationCandidates(
+                    workflow.type,
+                    rerankedMethods,
+                    rerankedIntegrations,
+                    rerankedFrontend,
+                    ticketText,
+                    anchorSymbols
+                ),
+                rerankedRequestFields,
+                rerankedEndpoints,
+                excludedTargets,
+                limit,
+                workflow.type
             ),
-            rerankedRequestFields,
-            rerankedEndpoints,
-            excludedTargets,
-            limit,
-            workflow.type
+            workflow,
+            ticketText,
+            fieldTerms
         ),
-        workflow,
-        ticketText,
-        fieldTerms
+        anchorContext.anchoredTargets,
+        limit * 2
     );
 
     const allMatches = [
@@ -532,6 +604,12 @@ export function analyzeTicket(
         excludedTargets
     );
 
+    if (anchorContext.netNewSymbols.length > 0) {
+        implementationHints.push(
+            `Net-new symbols not found in graph: ${anchorContext.netNewSymbols.slice(0, 5).join(", ")}`
+        );
+    }
+
     return {
         query: ticketText,
         tokens,
@@ -555,6 +633,7 @@ export function analyzeTicket(
         relatedSymbols,
         claims,
         investigationTargets,
+        anchorContext,
         implementationHints,
         debug: options?.includeDebug
             ? {
@@ -573,7 +652,8 @@ function mergeInvestigationCandidates(
     methods: TicketMatchedNode[],
     integrations: TicketMatchedNode[],
     frontend: TicketMatchedNode[] = [],
-    ticketText = ""
+    ticketText = "",
+    anchorSymbols: string[] = []
 ): TicketMatchedNode[] {
     if (workflowType === "queue") {
         const integrationEntrypoints = pickBestIntegrationPerClass(
@@ -660,6 +740,22 @@ function mergeInvestigationCandidates(
     if (workflowType === "ui") {
         const vueComponents = frontend.filter(item => item.type === "vue_component");
         return dedupeMatchedNodes([...vueComponents, ...methods, ...frontend]);
+    }
+
+    if (workflowType === "api") {
+        const filteredMethods = methods.filter(item =>
+            !isGenericBaseConfigWithoutAnchor(item.id, item.file, anchorSymbols)
+        );
+
+        const domainMethods = filteredMethods.filter(item =>
+            /controller|service|resource|request|resolver|provider/i.test(`${item.id} ${item.file ?? ""}`)
+        );
+
+        const filteredFrontend = frontend.filter(item =>
+            scoreSymbolAnchorMatch(item.id, item.file, anchorSymbols) > 0
+        );
+
+        return dedupeMatchedNodes([...domainMethods, ...filteredMethods, ...filteredFrontend]);
     }
 
     return methods;
@@ -1509,7 +1605,8 @@ function findMatchingNodes(
     limit: number,
     documentFrequency: Map<string, number>,
     ticketText: string,
-    queueInfrastructure?: QueueInfrastructureContext
+    queueInfrastructure?: QueueInfrastructureContext,
+    anchorSymbols: string[] = []
 ): TicketMatchedNode[] {
     if (tokens.length === 0) return [];
 
@@ -1570,9 +1667,11 @@ function findMatchingNodes(
             endpointPenalty(row, intent) +
             scoreContextQuality(row, matchedTokens) +
             pathSegmentTokenOverlap(row.file, extractDistinctiveTicketTokens(ticketText)) * 12 +
+            scoreSymbolAnchorMatch(row.id, row.file, anchorSymbols) +
             workflowBoost.boost +
             scoreQueueInfrastructureBoost(row, workflow, queueInfrastructure) -
-            falsePositive.penalty;
+            falsePositive.penalty -
+            genericBaseConfigPenalty(row.id, row.file, anchorSymbols);
 
         if (score <= 0) continue;
 

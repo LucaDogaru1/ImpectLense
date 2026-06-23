@@ -1,4 +1,5 @@
 import { countTokenOverlap, extractDistinctiveTicketTokens } from "./ticketTextTokens";
+import { routeLabelsFromAnchors } from "./ticketRouteAnchoring";
 import { DbEdgeRow } from "./ticketGraphContext";
 
 export interface TicketFlowPath {
@@ -12,6 +13,7 @@ export interface FlowPathFilterContext {
     workflowType: string;
     seedNodeIds: string[];
     seedFiles?: Array<string | null>;
+    anchorRouteLabels?: string[];
 }
 
 interface ScoredGraphNode {
@@ -210,6 +212,11 @@ function scoreFlowPathRelevance(path: TicketFlowPath, context: FlowPathFilterCon
         return 100;
     }
 
+    const anchorLabels = context.anchorRouteLabels ?? [];
+    if (anchorLabels.some(label => label.length >= 5 && path.path.toLowerCase().includes(label))) {
+        return 120;
+    }
+
     const tokens = extractDistinctiveTicketTokens(context.ticketText);
     const tokenScore = countTokenOverlap(path.path, tokens);
 
@@ -250,6 +257,14 @@ export function filterFlowPathsForBriefing(
             }
 
             if (context.workflowType === "queue" && entry.path.complete) {
+                return false;
+            }
+
+            if (
+                (context.workflowType === "api" || context.workflowType === "mixed") &&
+                !entry.path.complete &&
+                (context.anchorRouteLabels?.length ?? 0) === 0
+            ) {
                 return false;
             }
 

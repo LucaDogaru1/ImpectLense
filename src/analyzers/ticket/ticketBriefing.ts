@@ -1,5 +1,6 @@
 import { TicketAnalyzerResult } from "./ticketAnalyzerV3";
 import { filterFlowPathsForBriefing, TicketFlowPath } from "./ticketFlowPaths";
+import { routeLabelsFromAnchors } from "./ticketRouteAnchoring";
 import { formatIntentLabel } from "./ticketIntent";
 import { TicketBriefing, TicketProbeResult, TicketSessionResolved } from "./ticketSessionTypes";
 import {
@@ -51,6 +52,16 @@ function isReadFirstCandidate(
         );
     }
 
+    if (workflowType === "api" || workflowType === "mixed") {
+        if (/baseconfigplayer|baseconfigsession|rssfeed|tokensettings|hotjarform|clientcategorieslist/i.test(haystack)) {
+            return false;
+        }
+
+        return /uitranslation|ui-translation|ui_translations|controller|service|resource|request|api_endpoint/i.test(
+            haystack
+        );
+    }
+
     return /expired|archive|vod|sqs|listener|consumer|import|controller|resource|store|update/i.test(haystack);
 }
 
@@ -77,6 +88,11 @@ function scoreStrongUiMatch(
 
     if (/\/cells\//.test(haystack)) {
         score += 2;
+    }
+
+    const primaryTokens = tokens.filter(token => token.length >= 8);
+    if (primaryTokens.some(token => haystack.includes(token))) {
+        score += 4;
     }
 
     return score + (item.score ?? 0) * 0.01;
@@ -289,12 +305,29 @@ export function buildTicketBriefing(
     const scoreById = new Map(
         [...analysis.investigationTargets, ...analysis.matchedFrontend].map(item => [item.id, item.score])
     );
-    const readFirst = mergeReadFirst(strongUiMatches, workflowFiltered, 5, analysis.query, scoreById);
+    const anchoredReadFirst =
+        intentOpen
+            ? []
+            : analysis.anchorContext?.anchoredTargets.map(item => ({
+                  id: item.id,
+                  file: item.file,
+                  reason: item.reason.split(" | ")[0] ?? item.reason,
+              })) ?? [];
+    const readFirst = mergeReadFirst(
+        [...anchoredReadFirst, ...strongUiMatches],
+        workflowFiltered,
+        5,
+        analysis.query,
+        scoreById
+    );
     const flowPaths = filterFlowPathsForBriefing(rawFlowPaths, {
         ticketText: analysis.query,
         workflowType,
         seedNodeIds: readFirst.map(item => item.id),
         seedFiles: readFirst.map(item => item.file),
+        anchorRouteLabels: analysis.anchorContext
+            ? routeLabelsFromAnchors(analysis.anchorContext.routes)
+            : [],
     }, 5);
     const relatedSymbols = analysis.relatedSymbols.slice(0, 5);
 
@@ -315,6 +348,12 @@ export function buildTicketBriefing(
 
     for (const gap of probe.infrastructureGaps.slice(0, 3)) {
         verify.push(gap);
+    }
+
+    for (const symbol of analysis.anchorContext?.netNewSymbols.slice(0, 5) ?? []) {
+        if (!intentOpen) {
+            verify.push(`Net-new symbol not in graph: ${symbol}`);
+        }
     }
 
     if (analysis.implementationConfidence < 0.35) {

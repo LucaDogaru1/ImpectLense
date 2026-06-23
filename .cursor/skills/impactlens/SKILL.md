@@ -35,7 +35,48 @@ impactlens ticket sqlite/Graph.sqlite \
   --answers=ticket_topic:<id>,change_includes:<id>
 ```
 
-Use `--scopes=php` only for pure backend/queue tickets with no UI. Use `php,js` when the ticket mentions CMS, components, layouts, hero/preset/slide, Vue, or frontend display logic.
+### Scope selection (`--scopes`)
+
+Choose scopes based on **how the feature is implemented**, not simply whether a UI exists.
+
+| Scopes   | Use when…                                                                                                                                                                              |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `php`    | Backend-only work: queue jobs, imports, migrations, services, repositories, Artisan commands, API serialization, or Laravel Blade / Livewire screens with little or no JS involvement. |
+| `php,js` | Vue/JavaScript frontends, CMS components, layouts, frontend display logic, or tickets that may cross frontend → API → backend boundaries.                                              |
+
+**Examples**
+
+* SQS listener + queue job + model status update → `php`
+* XML/CSV import pipeline → `php`
+* API response field added in a Laravel Resource → `php`
+* Blade-only admin screen → `php`
+* Livewire page with no meaningful JS graph involvement → `php`
+* Hero layout change in Vue → `php,js`
+* Slide preset dropdown → `php,js`
+* CMS module option component → `php,js`
+* Frontend display rule calling an API → `php,js`
+
+**Rule of thumb**
+
+Use `php,js` when the ticket references:
+
+* `.vue` files
+* Vue components
+* composables
+* frontend display behavior
+* client-side filtering
+* frontend API calls
+
+Use `php` when the ticket references only:
+
+* PHP classes
+* controllers
+* routes
+* jobs/listeners
+* migrations
+* Blade views
+* Livewire components
+* API resources/serializers
 
 ### Infer `ticket_topic` from ticket text
 
