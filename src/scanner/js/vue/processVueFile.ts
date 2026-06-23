@@ -3,9 +3,20 @@ import fs from "node:fs";
 import walk, { createWalkContext } from "../walk/jsWalker";
 import { ScannedJsFile } from "../scanJs";
 import { findVueComponentOptionsObject } from "./findComponentOptions";
+import { parseVueScript } from "./parseVueScript";
 import { splitSfc, VueSfc } from "./splitSfc";
-import { stripTypescript } from "./stripTypescript";
 import { registerScriptSetupComponent } from "./vueComponentRegistry";
+
+export interface ProcessVueFileOptions {
+    jsParser: Parser;
+    tsParser: Parser;
+}
+
+export interface ProcessVueFileResult {
+    usedTsParser: boolean;
+    usedStripFallback: boolean;
+    parseError: boolean;
+}
 
 function resolveTemplateContent(sfc: VueSfc): string | undefined {
     const template = sfc.template;
@@ -31,29 +42,34 @@ function componentFallbackName(relativePath: string): string {
     return base.replace(/\.vue$/i, "");
 }
 
-export function processVueFile(file: ScannedJsFile, parser: Parser): void {
+export function processVueFile(
+    file: ScannedJsFile,
+    options: ProcessVueFileOptions
+): ProcessVueFileResult {
     const source = fs.readFileSync(file.absolutePath, "utf-8");
     const sfc = splitSfc(source);
 
     if (!sfc.script?.content) {
-        return;
+        return { usedTsParser: false, usedStripFallback: false, parseError: false };
     }
 
-    const scriptSource = sfc.script.lang === "ts" || sfc.script.lang === "tsx"
-        ? stripTypescript(sfc.script.content)
-        : sfc.script.content;
-
-    let tree: Parser.Tree;
+    const rawScript = sfc.script.content;
+    let parsed: ReturnType<typeof parseVueScript>;
 
     try {
-        tree = parser.parse(scriptSource);
+        parsed = parseVueScript(
+            rawScript,
+            sfc.script.lang,
+            options.jsParser,
+            options.tsParser
+        );
     } catch (error) {
         console.error(`Vue script parser crashed: ${file.absolutePath}`);
         console.error(error);
-        return;
+        return { usedTsParser: false, usedStripFallback: false, parseError: true };
     }
 
-    if (tree.rootNode.hasError) {
+    if (parsed.tree.rootNode.hasError) {
         console.error(`Error parsing Vue script: ${file.absolutePath}`);
     }
 
@@ -63,17 +79,27 @@ export function processVueFile(file: ScannedJsFile, parser: Parser): void {
         externalTemplate,
     };
 
-    walk(tree.rootNode, file.relativePath, context);
+    walk(parsed.tree.rootNode, file.relativePath, context);
 
-    const optionsObject = findVueComponentOptionsObject(tree.rootNode);
+    const optionsObject = findVueComponentOptionsObject(parsed.tree.rootNode);
     if (optionsObject) {
-        return;
+        return {
+            usedTsParser: parsed.usedTsParser,
+            usedStripFallback: parsed.usedStripFallback,
+            parseError: parsed.tree.rootNode.hasError,
+        };
     }
 
-    if (sfc.script.setup || /\bdefineProps\s*\(/.test(scriptSource)) {
-        registerScriptSetupComponent(scriptSource, context, {
+    if (sfc.script.setup || /\bdefineProps\s*[<(]/.test(rawScript)) {
+        registerScriptSetupComponent(parsed.scriptSource, context, {
             externalTemplate,
             fallbackName: componentFallbackName(file.relativePath),
         });
     }
+
+    return {
+        usedTsParser: parsed.usedTsParser,
+        usedStripFallback: parsed.usedStripFallback,
+        parseError: parsed.tree.rootNode.hasError,
+    };
 }

@@ -58,6 +58,73 @@ export function resolveTemplateString(
     return result;
 }
 
+function unwrapFetchUrlNode(node: Parser.SyntaxNode): Parser.SyntaxNode {
+    if (node.type === "call_expression") {
+        const fn = node.childForFieldName("function");
+        if (fn?.type === "identifier" && (fn.text === "unref" || fn.text === "toValue")) {
+            const args = node.childForFieldName("arguments");
+            const inner = args?.namedChildren[0];
+            if (inner) {
+                return unwrapFetchUrlNode(inner);
+            }
+        }
+    }
+
+    if (node.type === "member_expression") {
+        const property = node.childForFieldName("property");
+        if (property?.text === "value") {
+            const object = node.childForFieldName("object");
+            if (object) {
+                return unwrapFetchUrlNode(object);
+            }
+        }
+    }
+
+    return node;
+}
+
+/** Pull a stable API path out of Nuxt-style host-prefixed template URLs. */
+export function normalizeInferredFetchPath(path: string): string {
+    let normalized = path.replace(/\$\{[^}]+\}/g, "{param}").replace(/\/+/g, "/");
+
+    const apiMatch = normalized.match(/\/?api\/v\d+\/[^?\s]*/);
+    if (apiMatch) {
+        return apiMatch[0].startsWith("/") ? apiMatch[0] : `/${apiMatch[0]}`;
+    }
+
+    normalized = normalized.replace(/^(\{[^{}]+\})+/, "");
+    if (normalized && !normalized.startsWith("/")) {
+        return `/${normalized}`;
+    }
+
+    return normalized || "/";
+}
+
+export function resolveFetchUrlArg(
+    urlNode: Parser.SyntaxNode,
+    context: JsWalkContext
+): string | null {
+    const resolvedNode = unwrapFetchUrlNode(urlNode);
+    let path: string | null = null;
+
+    if (resolvedNode.type === "template_string") {
+        path = resolveTemplateString(resolvedNode, context.moduleConstants);
+    } else if (resolvedNode.type === "string") {
+        path = readStringLiteral(resolvedNode);
+    } else if (
+        resolvedNode.type === "identifier" &&
+        context.moduleConstants.has(resolvedNode.text)
+    ) {
+        path = context.moduleConstants.get(resolvedNode.text)!;
+    }
+
+    if (!path) {
+        return null;
+    }
+
+    return normalizeInferredFetchPath(path);
+}
+
 function readHttpMethod(callNode: Parser.SyntaxNode): string {
     const args = callNode.children.filter(child => child.type === "arguments");
     const optionsArg = args[0]?.namedChildren[1];
@@ -94,26 +161,19 @@ export function extractFetchEndpoint(
         return null;
     }
 
-    let path: string | null = null;
-
-    if (urlNode.type === "template_string") {
-        path = resolveTemplateString(urlNode, context.moduleConstants);
-    } else if (urlNode.type === "string") {
-        path = readStringLiteral(urlNode);
-    } else if (urlNode.type === "identifier" && context.moduleConstants.has(urlNode.text)) {
-        path = context.moduleConstants.get(urlNode.text)!;
-    }
-
+    const path = resolveFetchUrlArg(urlNode, context);
     if (!path) {
         return null;
     }
-
-    path = path.replace(/\$\{[^}]+\}/g, "{param}").replace(/\/+/g, "/");
 
     return {
         method: readHttpMethod(callNode),
         path,
     };
+}
+
+export function isDirectFetchCallee(name: string): boolean {
+    return name === "fetch" || name === "$fetch" || name === "useFetch";
 }
 
 export function fetchEndpointNodeId(endpoint: FetchEndpoint): string {

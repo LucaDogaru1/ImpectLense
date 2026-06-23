@@ -39,7 +39,7 @@ Tuned for **Laravel**-shaped backends. Other PHP frameworks may scan, but route 
 - Global `fetch()` and registry-style HTTP helpers when patterns are recognized
 - Cross-language `HTTP_REQUEST` edges to PHP routes when resolvable
 
-Known gaps: Pug templates, many Nuxt / `useFetch` patterns, incomplete TypeScript-only semantics (`.ts` files are parsed with the JS grammar).
+Known gaps: Pug templates, Nitro `server/api/` routes, `lang="tsx"`. Nuxt `$fetch` / `useFetch` with string or computed URLs are tracked when the path contains `api/v…`; dynamic URLs without that segment may still be missed.
 
 ## Not supported yet
 
@@ -51,7 +51,7 @@ If you want to contribute a new language, start with: file discovery → AST wal
 
 The **PHP scanner was written and refined manually** over a long period — it reflects real debugging on production codebases and is the reference implementation for how deep a language pipeline should go.
 
-The **JavaScript / Vue scanner under `src/scanner/js/` is mostly AI-generated**. It exists so full-stack tickets (UI → API → backend) are possible without waiting for a second multi-month manual pass. It is useful today, but expect rough edges, uneven coverage, and more false gaps in briefings than on the PHP side.
+The **JavaScript / Vue / Nuxt scanner under `src/scanner/js/` is mostly AI-generated**. It exists so full-stack tickets (UI → API → backend) are possible without waiting for a second multi-month manual pass. It is useful today, but expect rough edges, uneven coverage, and more false gaps in briefings than on the PHP side.
 
 Adding languages one at a time, alone, does not scale. The JS folder is a deliberate trade-off: **ship cross-language value sooner**, then harden or replace pieces as real projects expose gaps.
 

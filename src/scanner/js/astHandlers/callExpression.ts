@@ -3,6 +3,7 @@ import { graph } from "../../../graph/graph";
 import {
     extractFetchEndpoint,
     fetchEndpointNodeId,
+    isDirectFetchCallee,
 } from "../resolvers/fetchEndpointExtractor";
 import { recordHttpClientEndpoint } from "../resolvers/httpClientCallExtractor";
 import { isBuiltinCall, isExternalApiCall, normalizeCalleeName } from "../resolvers/builtins";
@@ -57,11 +58,12 @@ function recordExternalApiCall(
 function recordFetchEndpoint(
     callNode: Parser.SyntaxNode,
     caller: string,
-    context: JsWalkContext
+    context: JsWalkContext,
+    via: string
 ): void {
     const endpoint = extractFetchEndpoint(callNode, context);
     if (!endpoint) {
-        recordExternalApiCall(caller, "fetch", "fetch", context);
+        recordExternalApiCall(caller, via, via, context);
         return;
     }
 
@@ -77,22 +79,26 @@ function recordFetchEndpoint(
             endpoint.method.toLowerCase(),
             ...endpoint.path.split("/").filter(part => part && !part.startsWith("{")),
         ],
-        description: "HTTP endpoint inferred from fetch()",
+        description: `HTTP endpoint inferred from ${via}()`,
     });
 
     graph.edges.set(`${caller}->${endpointId}:HTTP`, {
         from: caller,
         to: endpointId,
         type: "HTTP_REQUEST",
-        via: "fetch",
+        via,
         reason: label,
-        confidence: 0.9,
+        confidence: via === "fetch" ? 0.9 : 0.88,
     });
 }
 
-function isStandaloneFetchCall(node: Parser.SyntaxNode): boolean {
+function readDirectFetchCallee(node: Parser.SyntaxNode): string | null {
     const fn = node.childForFieldName("function");
-    return fn?.type === "identifier" && fn.text === "fetch";
+    if (fn?.type !== "identifier") {
+        return null;
+    }
+
+    return isDirectFetchCallee(fn.text) ? fn.text : null;
 }
 
 export function callExpressionType(node: Parser.SyntaxNode, context: JsWalkContext): void {
@@ -110,8 +116,9 @@ export function callExpressionType(node: Parser.SyntaxNode, context: JsWalkConte
         return;
     }
 
-    if (isStandaloneFetchCall(node)) {
-        recordFetchEndpoint(node, caller, context);
+    const fetchCallee = readDirectFetchCallee(node);
+    if (fetchCallee) {
+        recordFetchEndpoint(node, caller, context, fetchCallee);
         return;
     }
 

@@ -1,6 +1,29 @@
 import path from "node:path";
 import { getScanConfig } from "../../../shared/config/scanRuntime";
 
+const PACKAGE_ROOT_PATTERN = /^(packages\/[^/]+|apps\/[^/]+|clientPackages\/[^/]+)/;
+
+function resolvePackageRootPrefix(currentFile: string, importSource: string): string {
+    const rootMatch = currentFile.match(PACKAGE_ROOT_PATTERN);
+    if (!rootMatch) {
+        return importSource;
+    }
+
+    const root = rootMatch[1];
+
+    if (importSource === "~" || importSource.startsWith("~/")) {
+        const suffix = importSource === "~" ? "" : importSource.slice(2);
+        return `${root}/${suffix}`;
+    }
+
+    if (importSource === "@/" || importSource.startsWith("@/")) {
+        const suffix = importSource === "@/" ? "" : importSource.slice(2);
+        return `${root}/${suffix}`;
+    }
+
+    return importSource;
+}
+
 function applyPathAliases(importSource: string): string {
     const aliases = getScanConfig().pathAliases ?? {};
     const entries = Object.entries(aliases).sort((left, right) => right[0].length - left[0].length);
@@ -23,7 +46,12 @@ function withDefaultJsExtension(relativePath: string): string {
 }
 
 export function resolveImportSource(currentFile: string, importSource: string): string {
-    const cleaned = applyPathAliases(importSource.replace(/^["']|["']$/g, ""));
+    const normalizedFile = currentFile.replace(/\\/g, "/");
+    let cleaned = resolvePackageRootPrefix(
+        normalizedFile,
+        importSource.replace(/^["']|["']$/g, "")
+    );
+    cleaned = applyPathAliases(cleaned);
     if (!cleaned.startsWith(".")) {
         return withDefaultJsExtension(cleaned);
     }

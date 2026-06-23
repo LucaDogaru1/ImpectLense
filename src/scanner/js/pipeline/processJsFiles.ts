@@ -5,8 +5,10 @@ import { extractHttpResourcesFromSource } from "../resolvers/httpResourceRegexEx
 import { resetHttpResourceRegistry } from "../resolvers/httpResourceRegistry";
 import { ensureJsModuleNode } from "../astHandlers/jsModule";
 import { ScannedJsFile } from "../scanJs";
+import { stripTypescript } from "../nuxt/stripTypescript";
+import { createTsParser } from "../ts/parser";
+import { processTsFile } from "../ts/processTsFile";
 import { processVueFile } from "../vue/processVueFile";
-import { stripTypescript } from "../vue/stripTypescript";
 import walk, { createWalkContext } from "../walk/jsWalker";
 
 function isVueFile(relativePath: string): boolean {
@@ -18,10 +20,12 @@ function isTypeScriptFile(relativePath: string): boolean {
 }
 
 function readSource(file: ScannedJsFile): string {
-    const rawSource = fs.readFileSync(file.absolutePath, "utf-8");
-    return isTypeScriptFile(file.relativePath)
-        ? stripTypescript(rawSource)
-        : rawSource;
+    return fs.readFileSync(file.absolutePath, "utf-8");
+}
+
+function readJsFallbackSource(file: ScannedJsFile): string {
+    const rawSource = readSource(file);
+    return isTypeScriptFile(file.relativePath) ? stripTypescript(rawSource) : rawSource;
 }
 
 function populateHttpResourceRegistry(files: ScannedJsFile[]): void {
@@ -54,13 +58,23 @@ export function processJsFiles(files: ScannedJsFile[], parser: Parser): void {
     resetHttpResourceRegistry();
     populateHttpResourceRegistry(files);
 
+    const tsParser = createTsParser();
     let vueFiles = 0;
+    let vueTsScripts = 0;
+    let vueStripFallbackScripts = 0;
+    let tsFiles = 0;
+    let tsFallbackFiles = 0;
 
     for (const file of files) {
         if (isVueFile(file.relativePath)) {
             try {
-                processVueFile(file, parser);
+                const result = processVueFile(file, { jsParser: parser, tsParser });
                 vueFiles += 1;
+                if (result.usedTsParser) {
+                    vueTsScripts += 1;
+                } else if (result.usedStripFallback) {
+                    vueStripFallbackScripts += 1;
+                }
             } catch (error) {
                 console.error(`Vue parser crashed on file: ${file.absolutePath}`);
                 console.error(error);
@@ -68,26 +82,55 @@ export function processJsFiles(files: ScannedJsFile[], parser: Parser): void {
             continue;
         }
 
-        try {
-            const source = readSource(file);
-
+        if (isTypeScriptFile(file.relativePath)) {
             try {
-                walkJsSource(source, file.relativePath, parser);
+                processTsFile(file, tsParser);
+                tsFiles += 1;
             } catch (error) {
-                const recovered = recoverHttpResources(source, file.relativePath);
-                if (recovered === 0) {
-                    console.error(`JS parser crashed on file: ${file.absolutePath}`);
-                    console.error(error);
+                try {
+                    walkJsSource(readJsFallbackSource(file), file.relativePath, parser);
+                    tsFallbackFiles += 1;
+                } catch (fallbackError) {
+                    const recovered = recoverHttpResources(readSource(file), file.relativePath);
+                    if (recovered === 0) {
+                        console.error(`TS parser crashed on file: ${file.absolutePath}`);
+                        console.error(error);
+                        console.error(fallbackError);
+                    }
                 }
             }
+            continue;
+        }
+
+        try {
+            walkJsSource(readSource(file), file.relativePath, parser);
         } catch (error) {
-            console.error(`JS parser crashed on file: ${file.absolutePath}`);
-            console.error(error);
+            const recovered = recoverHttpResources(readSource(file), file.relativePath);
+            if (recovered === 0) {
+                console.error(`JS parser crashed on file: ${file.absolutePath}`);
+                console.error(error);
+            }
         }
     }
 
     if (vueFiles > 0) {
         console.log(`Parsed ${vueFiles} Vue SFC files`);
+    }
+
+    if (vueTsScripts > 0) {
+        console.log(`Parsed ${vueTsScripts} Vue <script lang="ts"> blocks (tree-sitter-typescript)`);
+    }
+
+    if (vueStripFallbackScripts > 0) {
+        console.log(`Parsed ${vueStripFallbackScripts} Vue TS scripts via strip fallback`);
+    }
+
+    if (tsFiles > 0) {
+        console.log(`Parsed ${tsFiles} TypeScript files (tree-sitter-typescript)`);
+    }
+
+    if (tsFallbackFiles > 0) {
+        console.log(`Parsed ${tsFallbackFiles} TypeScript files via strip fallback`);
     }
 
     const linkStats = linkCrossLanguageEndpoints();
