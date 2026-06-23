@@ -36,6 +36,12 @@ import {
     type TicketAnchorContext,
 } from "./ticketAnchoring";
 import { isGenericBaseConfigWithoutAnchor, scoreSymbolAnchorMatch } from "./ticketSymbolAnchors";
+import {
+    applyRankingHintsToInvestigationTargets,
+    applyRankingHintsToMatches,
+    hasRankingHints,
+    type TicketRankingHints,
+} from "./ticketRankingHints";
 
 type SQLiteDatabase = InstanceType<typeof Database>;
 
@@ -43,6 +49,7 @@ export interface TicketAnalyzerOptions {
     limit?: number;
     includeDebug?: boolean;
     graph?: TicketGraphContext;
+    rankingHints?: TicketRankingHints;
 }
 
 export interface TicketAnalyzerResult {
@@ -69,6 +76,7 @@ export interface TicketAnalyzerResult {
     claims: TicketClaims;
     investigationTargets: TicketMatchedNode[];
     anchorContext?: TicketAnchorContext;
+    rankingHints?: TicketRankingHints;
     implementationHints: string[];
     debug?: TicketAnalyzerDebug;
 }
@@ -355,6 +363,8 @@ export function analyzeTicket(
     const graph = options?.graph ?? loadTicketGraphContext(db);
     const anchorContext = buildTicketAnchorContext(ticketText, graph, limit);
     const anchorSymbols = anchorContext.symbols;
+    const rankingHints = options?.rankingHints;
+    const explicitBoostTerms = rankingHints?.boost ?? [];
 
     const tokens = [...new Set([
         ...baseTokens,
@@ -364,7 +374,11 @@ export function analyzeTicket(
         ...intent.sources,
         ...anchorSymbols.filter(symbol => symbol.length >= 6),
         ...anchorContext.routes.flatMap(route => route.path.split("/").filter(segment => segment.length >= 4)),
-    ])].filter(token => !NOISE_TOKENS.has(token.toLowerCase()));
+        ...explicitBoostTerms,
+    ])].filter(token =>
+        explicitBoostTerms.includes(token) ||
+        !NOISE_TOKENS.has(token.toLowerCase())
+    );
 
     const workflowScores = scoreWorkflows(ticketText, tokens);
     const workflow = calculateDominantWorkflow(workflowScores);
@@ -508,40 +522,55 @@ export function analyzeTicket(
         ticketText
     );
 
-    const investigationTargets = prependAnchoredTargets(
-        applyWorkflowTargetRerank(
-            buildInvestigationTargets(
-                mergeInvestigationCandidates(
-                    workflow.type,
-                    rerankedMethods,
-                    rerankedIntegrations,
-                    rerankedFrontend,
-                    ticketText,
-                    anchorSymbols
+    const investigationTargets = applyRankingHintsToInvestigationTargets(
+        prependAnchoredTargets(
+            applyWorkflowTargetRerank(
+                buildInvestigationTargets(
+                    mergeInvestigationCandidates(
+                        workflow.type,
+                        rerankedMethods,
+                        rerankedIntegrations,
+                        rerankedFrontend,
+                        ticketText,
+                        anchorSymbols
+                    ),
+                    rerankedRequestFields,
+                    rerankedEndpoints,
+                    excludedTargets,
+                    limit,
+                    workflow.type
                 ),
-                rerankedRequestFields,
-                rerankedEndpoints,
-                excludedTargets,
-                limit,
-                workflow.type
+                workflow,
+                ticketText,
+                fieldTerms
             ),
-            workflow,
-            ticketText,
-            fieldTerms
+            anchorContext.anchoredTargets,
+            limit * 2
         ),
-        anchorContext.anchoredTargets,
+        graph,
+        rankingHints,
         limit * 2
     );
 
+    const rerankedEndpointsWithHints = hasRankingHints(rankingHints)
+        ? applyRankingHintsToMatches(rerankedEndpoints, rankingHints)
+        : rerankedEndpoints;
+    const rerankedMethodsWithHints = hasRankingHints(rankingHints)
+        ? applyRankingHintsToMatches(rerankedMethods, rankingHints)
+        : rerankedMethods;
+    const rerankedFrontendWithHints = hasRankingHints(rankingHints)
+        ? applyRankingHintsToMatches(rerankedFrontend, rankingHints)
+        : rerankedFrontend;
+
     const allMatches = [
-        ...rerankedEndpoints,
-        ...rerankedMethods,
+        ...rerankedEndpointsWithHints,
+        ...rerankedMethodsWithHints,
         ...rerankedRequestFields,
-        ...rerankedFrontend,
+        ...rerankedFrontendWithHints,
     ];
 
     const flowPaths = buildTicketFlowPaths(
-        [...investigationTargets, ...rerankedFrontend, ...rerankedEndpoints],
+        [...investigationTargets, ...rerankedFrontendWithHints, ...rerankedEndpointsWithHints],
         allEdges
     );
 
@@ -634,6 +663,7 @@ export function analyzeTicket(
         claims,
         investigationTargets,
         anchorContext,
+        rankingHints: hasRankingHints(rankingHints) ? rankingHints : undefined,
         implementationHints,
         debug: options?.includeDebug
             ? {

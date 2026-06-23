@@ -2,6 +2,7 @@ import { DominantWorkflow, WorkflowType } from "./ticketWorkflow";
 import { TicketAnalyzerResult } from "./ticketAnalyzerV3";
 import { FieldLayerStatus } from "./ticketClaims";
 import { TicketChangeArea } from "./ticketIntent";
+import type { TicketRankingHints } from "./ticketRankingHints";
 
 /** Graph surfaces included in analysis. JS will be added when frontend scanning lands. */
 export type GraphScope = "php" | "js";
@@ -90,6 +91,7 @@ export interface TicketSessionInput {
     answers?: Record<string, string>;
     limit?: number;
     includeDebug?: boolean;
+    rankingHints?: TicketRankingHints;
     /** Skip intent questions and infer from ticket text (--non-interactive). */
     skipIntent?: boolean;
 }

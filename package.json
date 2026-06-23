@@ -1,6 +1,6 @@
 {
   "name": "impactlens",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Static code graph scanner and ticket-driven briefing CLI for AI-assisted development. currently only supports php and js/vue",
   "main": "bin/impactlens.js",
   "bin": {
@@ -38,6 +38,7 @@
     "test:ts-parser": "tsx src/scanner/js/ts/tsParser.test.ts",
     "test:vue-ts-script": "tsx src/scanner/js/vue/processVueFile.test.ts",
     "test:nuxt-fetch": "tsx src/scanner/js/resolvers/nuxtFetchExtractor.test.ts",
+    "test:ticket-ranking-hints": "tsx src/analyzers/ticket/ticketRankingHints.test.ts",
     "analyze:risk": "tsx src/cli/commands/risk.ts",
     "smoke:real-db": "npm run smoke:real-db:fast",
     "smoke:real-db:fast": "npm run analyze:cycles -- sqlite/Graph.sqlite --limit=10 && npm run analyze:architecture -- sqlite/Graph.sqlite --include-depends-on --ignore-likely-false-positives --limit=10 && npm run analyze:hotspots -- sqlite/Graph.sqlite --limit=10 && npm run analyze:risk -- sqlite/Graph.sqlite --limit=10 && npm run analyze:ai-context -- sqlite/Graph.sqlite \"SpOTTBackend\\Services\\Content\\Search\\SearchService::buildParamsFromRequest\" --compact",

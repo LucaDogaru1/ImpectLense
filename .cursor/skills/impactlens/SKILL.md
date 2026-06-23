@@ -52,8 +52,12 @@ Always pass intent via `--answers` (derived from the ticket you just read):
 impactlens ticket sqlite/Graph.sqlite \
   --ticket=tickets/example.txt \
   --scopes=php,js \
-  --answers=ticket_topic:<id>,change_includes:<id>
+  --answers=ticket_topic:<id>,change_includes:<id> \
+  --boost=SlidePresetDropdown,slidePreset \
+  --suppress=vertical-promotion
 ```
+
+`--boost` / `--suppress` are optional agent hints. Use them when the ticket names concrete symbols but the graph ranks noisy neighbors higher (e.g. hero tickets where `vertical-promotion` drowns `heroTeaser`). The analyzer still ranks against the real graph — hints only nudge scores.
 
 ### Scope selection (`--scopes`)
 

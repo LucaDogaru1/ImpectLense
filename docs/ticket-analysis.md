@@ -22,6 +22,8 @@ Add `--full` when debugging ranking.
 | `--scopes=php,js` | Include PHP and JS graph nodes (auto-detects js when available) |
 | `--non-interactive` | Infer intent and skip prompts (alias: `--auto`) |
 | `--answers=...` | Pre-fill specific answers (works with either mode) |
+| `--boost=term,...` | Agent hint: boost graph nodes matching these symbols or path segments |
+| `--suppress=term,...` | Agent hint: demote or drop nodes matching these terms |
 | `--full` | Briefing + detailed analysis sections |
 | `--legacy` | Skip session; raw ranked matches |
 

@@ -23,6 +23,7 @@ import {
     TicketSessionStartResult,
 } from "../../analyzers/ticket/ticketSessionTypes";
 import { toBulletList } from "../../shared/formatting/text";
+import { buildRankingHints, hasRankingHints } from "../../analyzers/ticket/ticketRankingHints";
 import { getIntOption, getOptionValue, hasFlag } from "../shared/cliArgs";
 
 type TicketRenderPayload = TicketAnalyzerResult & {
@@ -50,6 +51,15 @@ const interactive = !nonInteractive;
 const fullOutput = hasFlag(args, "--full");
 const legacy = hasFlag(args, "--legacy");
 const scopesArg = getOptionValue(args, "--scopes");
+const rankingHints = buildRankingHints(
+    getOptionValue(args, "--boost"),
+    getOptionValue(args, "--suppress")
+);
+const sessionOptions = {
+    limit,
+    includeDebug,
+    ...(hasRankingHints(rankingHints) ? { rankingHints } : {}),
+};
 
 function resolveTicketText(): string {
     if (!ticketPath?.trim()) {
@@ -484,8 +494,7 @@ async function runSessionFlow(db: Database): Promise<string> {
         ticketText,
         scopes,
         answers: presetAnswers,
-        limit,
-        includeDebug,
+        ...sessionOptions,
     });
 
     while (result.status === "needs_input") {
@@ -519,10 +528,7 @@ async function runSessionFlow(db: Database): Promise<string> {
                 return renderProbeSummary(result);
             }
 
-            result = continueTicketSession(db, result.session, newAnswers, {
-                limit,
-                includeDebug,
-            });
+            result = continueTicketSession(db, result.session, newAnswers, sessionOptions);
             continue;
         }
 
@@ -530,10 +536,7 @@ async function runSessionFlow(db: Database): Promise<string> {
             showIntentIntro: result.session.phase === "intent",
         });
 
-        result = continueTicketSession(db, result.session, answers, {
-            limit,
-            includeDebug,
-        });
+        result = continueTicketSession(db, result.session, answers, sessionOptions);
 
         if (result.status === "needs_input" && answers.truncated_ack === "no") {
             return renderProbeSummary(result);
@@ -574,6 +577,8 @@ if (!dbPath) {
         "  --scopes=php,js      Graph scopes (auto-detects js when graph has Vue/JS nodes)",
         "  --non-interactive    Infer intent and skip prompts (also --auto)",
         "  --answers=q:id,...   Pre-fill answers (works with either mode)",
+        "  --boost=term,...     Agent hint: boost nodes matching these symbols/paths",
+        "  --suppress=term,...  Agent hint: demote or drop nodes matching these terms",
         "  --full               Briefing + detailed analysis (raw matches, evidence)",
         "  --legacy             Skip session; run analyzeTicket directly",
         "",
@@ -595,7 +600,11 @@ const db = new Database(dbPath);
 async function main(): Promise<void> {
     try {
         if (legacy) {
-            const analyzerOptions: TicketAnalyzerOptions = { limit, includeDebug };
+            const analyzerOptions: TicketAnalyzerOptions = {
+                limit,
+                includeDebug,
+                ...(hasRankingHints(rankingHints) ? { rankingHints } : {}),
+            };
             const result = analyzeTicket(db, ticketText, analyzerOptions);
             const payload: TicketRenderPayload = {
                 ...result,

@@ -68,12 +68,13 @@ function runFinalAnalysis(
     db: SQLiteDatabase,
     session: TicketSessionState,
     graph: TicketGraphContext,
-    options?: Pick<TicketAnalyzerOptions, "limit" | "includeDebug">
+    options?: Pick<TicketAnalyzerOptions, "limit" | "includeDebug" | "rankingHints">
 ): { analysis: TicketAnalyzerResult; briefing: ReturnType<typeof buildTicketBriefing> } {
     const enrichedTicket = enrichTicketForAnalysis(session.ticketText, session.resolved);
     const analysis = analyzeTicket(db, enrichedTicket, {
         limit: options?.limit ?? 5,
         includeDebug: options?.includeDebug,
+        rankingHints: options?.rankingHints,
         graph,
     });
     const briefing = buildTicketBriefing(analysis, session.probe!, session.resolved);
@@ -132,7 +133,7 @@ function runScanPhase(
     answers: Record<string, string>,
     round: number,
     graph?: TicketGraphContext,
-    options?: Pick<TicketAnalyzerOptions, "limit" | "includeDebug">
+    options?: Pick<TicketAnalyzerOptions, "limit" | "includeDebug" | "rankingHints">
 ): TicketSessionStartResult {
     const ctx = graph ?? loadTicketGraphContext(db);
     let session = buildSessionState(
@@ -216,7 +217,7 @@ export function continueTicketSession(
     db: SQLiteDatabase,
     session: TicketSessionState,
     newAnswers: Record<string, string>,
-    options?: Pick<TicketAnalyzerOptions, "limit" | "includeDebug"> & { graph?: TicketGraphContext }
+    options?: Pick<TicketAnalyzerOptions, "limit" | "includeDebug" | "rankingHints"> & { graph?: TicketGraphContext }
 ): TicketSessionContinueResult {
     const mergedAnswers = { ...session.answers, ...newAnswers };
 

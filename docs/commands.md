@@ -389,6 +389,8 @@ Default output is the AI briefing (token-efficient). Session flags:
 | `--ticket=path` | Path to ticket text file |
 | `--scopes=php,js` | Graph surfaces to include (auto-detects js when graph has Vue/JS nodes) |
 | `--answers=q:id,...` | Pre-fill session answers (works with either mode) |
+| `--boost=term,...` | Agent hint: boost nodes matching symbol/path terms from the ticket |
+| `--suppress=term,...` | Agent hint: demote or drop noisy matches |
 | `--non-interactive` | Infer intent and skip prompts (alias: `--auto`) |
 | `--full` | Briefing + detailed analysis (raw matches, evidence) |
 | `--legacy` | Skip session; direct analyzer output |
