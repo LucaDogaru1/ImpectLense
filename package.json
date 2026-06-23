@@ -1,6 +1,6 @@
 {
   "name": "impactlens",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Static PHP/JS code graph scanner and ticket-driven briefing CLI for AI-assisted development.",
   "main": "bin/impactlens.js",
   "bin": {
