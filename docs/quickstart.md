@@ -15,8 +15,8 @@ impactlens --help
 **Or clone this repo** for development:
 
 ```bash
-git clone https://github.com/LucaDogaru1/ImpectLense.git
-cd ImpectLense
+git clone https://github.com/LucaDogaru1/ImpectLens.git
+cd ImpectLens
 npm install
 ```
 

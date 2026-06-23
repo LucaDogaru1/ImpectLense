@@ -120,7 +120,7 @@ After npm install, the Cursor agent skill is written to:
   .cursor/skills/impactlens/SKILL.md
 
 Skip auto-install: IMPACTLENS_SKIP_SKILL=1 npm install impactlens
-Docs: https://github.com/LucaDogaru1/ImpectLense
+Docs: https://github.com/LucaDogaru1/ImpectLens
 `);
 }
 

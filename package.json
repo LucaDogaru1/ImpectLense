@@ -50,11 +50,11 @@
   "license": "ISC",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/LucaDogaru1/ImpectLense.git"
+    "url": "git+https://github.com/LucaDogaru1/ImpectLens.git"
   },
-  "homepage": "https://github.com/LucaDogaru1/ImpectLense#readme",
+  "homepage": "https://github.com/LucaDogaru1/ImpectLens#readme",
   "bugs": {
-    "url": "https://github.com/LucaDogaru1/ImpectLense/issues"
+    "url": "https://github.com/LucaDogaru1/ImpectLens/issues"
   },
   "engines": {
     "node": ">=18"
