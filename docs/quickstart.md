@@ -22,9 +22,15 @@ npm install
 
 Use `impactlens …` after npm install in a project, or `npm run scan` / `npm run analyze:ticket` when working from a clone.
 
+List all CLI commands: `npx impactlens --commands`
+
 ## 2. Config (only if the target repo uses `@/` imports)
 
-Create **`impactlens.config.json` at the scan root** (the repo you scan, not inside ImpactLens):
+Create **`impactlens.config.json` at the scan root** (the repo you scan, not inside ImpactLens).
+
+**Copy-paste examples:** [config-setup.md](config-setup.md) — Laravel+Vue `@/`, Nuxt package aliases, Vite `src/`, subfolder scans.
+
+Minimal Laravel + Vue example:
 
 ```json
 {
@@ -38,7 +44,7 @@ Skip this if the project only uses relative imports (`../../api`).
 
 If you use `@/` and skip this, Vue→API→controller links will be missing in the graph.
 
-Details: [config.md](config.md) · [scan-config.md](scan-config.md)
+Details: [config-setup.md](config-setup.md) · [config.md](config.md) · [scan-config.md](scan-config.md)
 
 ## 3. Scan (once, re-run when the codebase changes a lot)
 
@@ -51,8 +57,8 @@ Produces:
 - `sqlite/Graph.sqlite` — used by all analyzers
 - `Graph.json` — optional backup / inspect
 
-**PHP only:** `--lang=php`  
-**JS/Vue only:** `--lang=js`
+**JS/Vue only:** `--lang=js`  
+**Nuxt monorepo:** `--lang=js` at the Nuxt repo root — add `impactlens.config.json` with package aliases. See [config-setup.md](config-setup.md#2-nuxt-3-monorepo-package-scoped-aliases).
 
 ## 4. Analyze a ticket (default = AI briefing)
 
@@ -95,6 +101,8 @@ Cursor loads `.cursor/skills/impactlens/SKILL.md` from this repo — same workfl
 
 | Doc | Why open it |
 |-----|-------------|
+| [support.md](support.md) | PHP vs JS/Vue/**Nuxt** maturity, gaps, what to expect from the graph |
+| [config-setup.md](config-setup.md) | **Path alias setup** — copy-paste `impactlens.config.json` examples |
 | [config.md](config.md) | All config files explained |
 | [scan-config.md](scan-config.md) | Alias examples, monorepo paths |
 | [commands.md](commands.md) | All CLI flags |

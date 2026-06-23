@@ -1,5 +1,7 @@
 # Scan configuration
 
+> **New to path aliases?** Start with [config-setup.md](config-setup.md) — copy-paste examples for Laravel+Vue, Nuxt, and Vite.
+
 ImpactLens reads an optional config file from the **scan root** (the path you pass to `npm run scan`):
 
 - `impactlens.config.json`
@@ -125,6 +127,25 @@ If you scan a subfolder only (e.g. `apps/spott-backend`), adjust the target acco
   }
 }
 ```
+
+### Nuxt monorepo
+
+Nuxt 3 monorepos often use **package-scoped aliases** instead of a single `@/`. Map each prefix to `packages/<name>/` (or `apps/<name>/`) relative to the scan root:
+
+```json
+{
+  "pathAliases": {
+    "@core/": "packages/core/",
+    "@content/": "packages/content/",
+    "@ui-design/": "packages/ui-design/",
+    "@/": "packages/core/"
+  }
+}
+```
+
+Scan the monorepo root with `--lang=js`. For `$fetch` / `useFetch` → backend route linking, also scan the Laravel (or other) API repo with `--lang=php` and merge, or use `--lang=both` when backend and frontend live in one tree.
+
+What Nuxt covers today (and what it does not): [support.md](support.md#nuxt-beta).
 
 ---
 

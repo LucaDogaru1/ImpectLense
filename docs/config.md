@@ -53,7 +53,7 @@ npm run scan -- /path/to/your-repo --lang=both --no-merge --output=both
 
 Scan auto-loads `impactlens.config.json` from `/path/to/your-repo`.
 
-**More detail:** [scan-config.md](scan-config.md)
+**More detail:** [config-setup.md](config-setup.md) (copy-paste examples) · [scan-config.md](scan-config.md) (reference)
 
 ---
 
@@ -211,7 +211,7 @@ The `ticket` section in the same file is the SpOTT-specific ranking preset (refe
 
 | Goal | Config | Action |
 |------|--------|--------|
-| First-time setup on a monorepo | Scan config | Add `impactlens.config.json` at scan root if using `@/` |
+| First-time setup on a monorepo | Scan config | Add `impactlens.config.json` at scan root — [config-setup.md](config-setup.md) |
 | CI architecture gate | Architecture JSON | `--architecture-config=config/architecture_scan/your.json` |
 | Ticket ranking for your domain | Ticket JSON | Copy/adapt `config/ticket.json`; wait for `--config` or tune in code |
 | SpOTT codebase | `spott.json` | Architecture rules ready to use |

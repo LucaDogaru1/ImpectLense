@@ -28,6 +28,7 @@ function installAgentSkill(io = {}) {
     fs.mkdirSync(skillDir, { recursive: true });
     fs.writeFileSync(skillDest, fs.readFileSync(skillSource, 'utf8'), 'utf8');
     log(`[impactlens] Cursor agent skill → ${path.relative(projectRoot, skillDest)}`);
+    log('[impactlens] Commands: npx impactlens --commands');
     return { ok: true, path: skillDest };
 }
 

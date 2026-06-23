@@ -6,6 +6,8 @@ ImpactLens scans codebases into a **queryable code graph**, then maps **ticket t
 
 It is **static analysis** (tree-sitter, no runtime). Scan once into `Graph.sqlite`; run analyzers as often as you need.
 
+**Before you scan or run ticket analysis, read [docs/support.md](docs/support.md).** It defines what PHP vs JS/Vue actually cover, known gaps, and how reliable each language pipeline is — so you know what the graph can and cannot tell you.
+
 ## Install
 
 ```bash
@@ -19,6 +21,9 @@ npx impactlens --help
 After `npm install`, ImpactLens writes a **Cursor agent skill** to `.cursor/skills/impactlens/SKILL.md` (same playbook as in this repo). Skip with `IMPACTLENS_SKIP_SKILL=1`. Re-run anytime: `npx impactlens install-skill`.
 
 ```bash
+# List all CLI commands
+npx impactlens --commands
+
 # Scan + ticket workflow (global CLI)
 impactlens scan /path/to/repo --lang=both --output=both
 impactlens ticket sqlite/Graph.sqlite --ticket=tickets/issue.txt --scopes=php,js \
@@ -71,7 +76,9 @@ npm run analyze:ticket -- sqlite/Graph.sqlite \
 npm run analyze:ai-context -- sqlite/Graph.sqlite "App\\Services\\Foo::bar" --compact
 ```
 
-If the scanned repo uses **`@/` import aliases**, add `impactlens.config.json` at the **scan root** (the repo you pass to `scan`, not inside ImpactLens). Without it, Vue→API→controller chains often stay broken. See [docs/scan-config.md](docs/scan-config.md).
+If the scanned repo uses **`@/` import aliases**, add `impactlens.config.json` at the **scan root** (the repo you pass to `scan`, not inside ImpactLens). Without it, Vue→API→controller chains often stay broken.
+
+**→ Config setup (copy-paste alias examples):** [docs/config-setup.md](docs/config-setup.md)
 
 **→ Full setup:** [docs/quickstart.md](docs/quickstart.md)
 
@@ -117,22 +124,25 @@ Agents: see [.cursor/skills/impactlens/SKILL.md](.cursor/skills/impactlens/SKILL
 
 **PHP (tree-sitter):** classes, methods, routes, jobs/listeners/commands as entrypoints, call and dependency edges.
 
-**JS/Vue:** modules, Vue SFCs (including partial `<script setup>` support), composables, imports, calls, global `fetch()`, and **registry-based API clients** (e.g. `API.slidePresets.fetch()` → route node when `@/` resolves).
+**JS/Vue/Nuxt:** modules, Vue SFCs (including `<script setup lang="ts">`), composables, imports, calls, `fetch()`, Nuxt `$fetch` / `useFetch`, and **registry-based API clients** (e.g. `API.slidePresets.fetch()` → route node when aliases resolve).
 
 **Cross-language:** when JS `HTTP_REQUEST` paths match PHP routes, you get UI → endpoint → controller chains in the graph and in ticket briefings.
 
 ## Language support
 
+**Read [docs/support.md](docs/support.md)** for the full language matrix, file types, scanner maturity, and known gaps. Do not skip it if you use JS/Vue or mixed PHP+frontend repos.
+
 | Language | Status |
 |----------|--------|
 | **PHP** (Laravel-oriented) | Primary — most mature scanner and analysis support |
-| **JavaScript / Vue / TypeScript** | Beta — imports, calls, components, and HTTP linking supported |
+| **JavaScript / Vue / TypeScript** | Beta — imports, calls, components, HTTP linking |
+| **Nuxt** | Beta — monorepos, composables, `$fetch` / `useFetch`, Vue TS SFCs — see [docs/support.md](docs/support.md) |
 
 Full matrix, file types, gaps, and contribution notes: **[docs/support.md](docs/support.md)**.
 
 The PHP pipeline (`src/scanner/php/`) is currently the most mature and extensively tested part of the project.
 
-JavaScript/Vue support was developed with significant AI assistance and is still evolving. It is used successfully for full-stack ticket analysis and flow-path generation, but should be considered less battle-tested than the PHP scanner.
+JavaScript/Vue/Nuxt support was developed with significant AI assistance and is still evolving. It is used successfully for full-stack ticket analysis and flow-path generation, but should be considered less battle-tested than the PHP scanner.
 
 The graph model is language-agnostic, and additional language scanners can be added over time.
 
@@ -143,7 +153,7 @@ ImpactLens is strong on **navigation and blast radius**, not on proving correctn
 | Area | Reality |
 |------|---------|
 | **Import aliases** | Must map `@/` (etc.) in `impactlens.config.json` at scan root. One `@/` target per scan — monorepos with backend + frontend both using `@/` may need separate scans + merge. |
-| **Vue** | SFC script blocks yes; Pug templates not parsed; not all Nuxt/`useFetch` patterns linked yet. |
+| **Vue / Nuxt** | SFC script blocks and composables yes; `$fetch` / `useFetch` tracked when URL has `api/v…`; Pug and Nitro routes not parsed — see [docs/support.md](docs/support.md). |
 | **Ticket ranking** | Heuristic — wrong workflow if intent is left open (`unsure`). Agents should pass explicit `--answers` from ticket text. |
 | **Flow paths** | `[partial]` means a real graph gap — do not invent missing code. Unrelated `[complete]` paths can appear; match ticket entities. |
 | **Ticket tuning JSON** | `config/ticket.json` is reference schema; not wired to CLI yet (ranking is in code). |
@@ -158,17 +168,18 @@ None of that makes the tool useless — it means **scan quality and intent matte
 | `impactlens.config.json` | Scan root (your repo) | `npm run scan` — path aliases, HTTP resource pattern |
 | `config/architecture_scan/*.json` | This repo | `analyze:architecture --architecture-config=…` |
 
-Details: [docs/config.md](docs/config.md)
+Details: [docs/config-setup.md](docs/config-setup.md) · [docs/config.md](docs/config.md)
 
 ## Documentation
 
 | Doc | Contents |
 |-----|----------|
+| **[Language support](docs/support.md)** | **Read this** — PHP vs JS/Vue status, gaps, scanner maturity |
 | **[Quickstart](docs/quickstart.md)** | Install, scan, ticket analysis |
-| **[Language support](docs/support.md)** | PHP vs JS/Vue status, gaps, contributions |
+| **[Config setup](docs/config-setup.md)** | **Start here** — `impactlens.config.json` + path alias copy-paste examples |
 | **[Config](docs/config.md)** | All config types |
 | [Commands](docs/commands.md) | Full CLI reference |
-| [Scan config](docs/scan-config.md) | Path aliases, HTTP linking |
+| [Scan config](docs/scan-config.md) | Path aliases, HTTP linking (reference) |
 | [Graph model](docs/graph-model.md) | Node and edge types |
 | [Ticket analysis](docs/ticket-analysis.md) | Session, briefing, workflows |
 | [AI context](docs/ai-context.md) | Symbol deep dive |

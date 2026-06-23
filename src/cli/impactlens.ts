@@ -89,8 +89,8 @@ const COMMANDS: Record<string, CommandDef> = {
     },
 };
 
-function printHelp(): void {
-    console.log(`ImpactLens — static code graph + ticket briefings
+function printCommands(): void {
+    console.log(`ImpactLens commands
 
 Usage:
   impactlens <command> [args...]
@@ -108,13 +108,22 @@ Commands:`);
         }
         console.log(`  ${name.padEnd(22)} ${def.description}`);
     }
+}
 
+function printHelp(): void {
+    console.log(`ImpactLens — static code graph + ticket briefings
+
+`);
+    printCommands();
     console.log(`
 Examples:
   impactlens scan /path/to/repo --lang=both --output=both
   impactlens ticket sqlite/Graph.sqlite --ticket=tickets/issue.txt --scopes=php,js \\
     --answers=ticket_topic:ui,change_includes:cms_ui
   impactlens ai-context sqlite/Graph.sqlite "App\\\\Services\\\\Foo::bar" --compact
+
+List commands only:  impactlens --commands
+Full help:           impactlens --help
 
 After npm install, the Cursor agent skill is written to:
   .cursor/skills/impactlens/SKILL.md
@@ -151,6 +160,11 @@ const command = args[0];
 
 if (!command || command === "--help" || command === "-h" || command === "help") {
     printHelp();
+    process.exit(0);
+}
+
+if (command === "--commands" || command === "commands") {
+    printCommands();
     process.exit(0);
 }
 

@@ -75,6 +75,7 @@ Choose scopes based on **how the feature is implemented**, not simply whether a 
 * Slide preset dropdown → `php,js`
 * CMS module option component → `php,js`
 * Frontend display rule calling an API → `php,js`
+* Nuxt monorepo ticket (composables, `$fetch`, packages) → `php,js` — see package [support.md](../../docs/support.md#nuxt-beta)
 
 **Rule of thumb**
 
@@ -229,7 +230,8 @@ Heavier output; use when refactoring a core method.
 
 ## Known graph gaps (say honestly if relevant)
 
-- Partial flow paths when Vue has no `HTTP_REQUEST` edge (missing path aliases or scan gap)
+- Partial flow paths when Vue/Nuxt has no `HTTP_REQUEST` edge (missing path aliases, dynamic URL, or scan gap)
+- Nuxt: Nitro `server/api/` routes not scanned; `$fetch`/`useFetch` need `api/v…` in source for static URL extraction
 - Pug templates not parsed
 - Graph excludes `vendor`, `node_modules`, `tests` by default
 - Ticket ranking is heuristic; explicit `--answers` are preferred when ticket intent is clear
