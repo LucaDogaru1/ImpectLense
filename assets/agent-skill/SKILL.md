@@ -19,6 +19,7 @@ description: >-
 3. Decide --answers and --scopes (override when confidence ≤ 0.55)
 4. impactlens ticket sqlite/Graph.sqlite --ticket=… --scopes=… --answers=… --non-interactive
 5. Read briefing → ai-context / change-impact on read-first symbols
+6. After investigation or implementation → append one line to `.ai/impactlens/impactlens-feedback.jsonl`
 ```
 
 Do not infer `--answers` from the filename, ticket path, or memory.  
@@ -170,7 +171,51 @@ impactlens impact sqlite/Graph.sqlite "<symbol>" --limit=20        # deeper + in
 | `risk` / `hotspots` | Repo-wide risk, no specific ticket target |
 | `cycles` / `dead-code` | Cleanup tasks, not feature tickets |
 
-**Sequence:** classify → analyze:ticket → read-first → pick symbol → `ai-context` → `change-impact` (if editing) → implement
+**Sequence:** classify → analyze:ticket → read-first → implement → feedback (step 6)
+
+---
+
+## Step 3 — Feedback (workflow step 6)
+
+When you have enough information to judge the briefing, append **one JSON line** to `.ai/impactlens/impactlens-feedback.jsonl`. Judge **final** usefulness, not first impression. Once per ticket. Skip if you could not meaningfully evaluate the briefing (e.g. aborted before opening read-first).
+
+Local telemetry — usually gitignored; commit only if the team shares feedback intentionally.
+
+```json
+{
+  "timestamp": "2026-06-22T12:00:00Z",
+  "ticket": "tickets/example.txt",
+  "summary": "Hero teaser layout configuration",
+  "ticket_topic": "ui",
+  "change_includes": "cms_ui",
+  "classificationConfidence": 0.72,
+  "briefingConfidence": 0.41,
+  "scopes": "php,js",
+  "boost": "HeroTeaser",
+  "suppress": "vertical-promotion",
+  "helpful": true,
+  "reason": "helpful",
+  "readFirst": ["js:apps/.../heroTeaser/index.vue::HeroTeaser"],
+  "actual": ["js:apps/.../heroTeaser/index.vue::HeroTeaser"]
+}
+```
+
+When misleading, use the same schema with `helpful: false`, a failure `reason`, and `actual` listing what you used instead of (or in addition to) `readFirst`.
+
+| Field | Source |
+|-------|--------|
+| `timestamp` | UTC ISO-8601 when recording feedback |
+| `ticket` | Path passed to `--ticket` |
+| `summary` | One sentence from classification (not full ticket text) |
+| `ticket_topic`, `change_includes` | Values you passed in `--answers` |
+| `classificationConfidence` | `confidence` from `ticket:classify` JSON |
+| `briefingConfidence` | Implementation confidence from briefing (optional) |
+| `scopes`, `boost`, `suppress` | Flags passed to analyze (omit if unused) |
+| `helpful`, `reason` | Your verdict — `reason: helpful` only when `helpful: true` |
+| `readFirst` | Read-first entries from briefing (use `[]` if none) |
+| `actual` | Files/symbols investigated or changed (omit if unknown) |
+
+**`reason`:** `helpful` · `wrong-workflow` · `wrong-files` · `missing-files` · `wrong-flow-path` · `no-useful-results`
 
 ---
 
