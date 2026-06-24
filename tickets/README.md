@@ -1,12 +1,19 @@
 # Tickets (local)
 
-Put ticket text files here and pass the path to the analyzer:
+Put ticket text files here.
+
+**Agents:** classify first, then analyze with the flags you chose.
 
 ```bash
+# 1. Classify (required)
+npm run classify:ticket -- tickets/my-ticket.txt
+
+# 2. Analyze (use --answers and --scopes from classification review)
 npm run analyze:ticket -- sqlite/Graph.sqlite \
   --ticket=tickets/my-ticket.txt \
   --scopes=php,js \
-  --answers=ticket_topic:ui,change_includes:cms_ui
+  --answers=ticket_topic:ui,change_includes:cms_ui \
+  --non-interactive
 ```
 
 **Only `--ticket=path`** — path to a text file (relative or absolute).
@@ -17,6 +24,10 @@ npm run analyze:ticket -- sqlite/Graph.sqlite \
 ```
 
 All ticket files in this folder are **gitignored** (private). Only this README is tracked.
+
+## Vague tickets (tier C)
+
+Real-world symptom tickets live in [`vague/`](vague/README.md) — use them to test triage, not sharp regressions.
 
 ## Suggested ticket structure
 

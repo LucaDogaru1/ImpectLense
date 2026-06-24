@@ -87,8 +87,42 @@ export function rankingHintMatchesHaystack(haystack: string, term: string): bool
     return false;
 }
 
-function nodeHaystack(item: Pick<TicketMatchedNode, "id" | "file" | "name">): string {
-    return `${item.id} ${item.file ?? ""} ${item.name}`.toLowerCase();
+type RankingHintNodeRef = { id: string; file: string | null; name?: string };
+
+export function nodeHaystack(item: RankingHintNodeRef): string {
+    return `${item.id} ${item.file ?? ""} ${item.name ?? ""}`.toLowerCase();
+}
+
+export function isSuppressedByRankingHints(
+    item: RankingHintNodeRef,
+    hints?: TicketRankingHints
+): boolean {
+    if (!hints?.suppress.length) {
+        return false;
+    }
+
+    const haystack = nodeHaystack(item);
+    return matchedHintTerms(haystack, hints.suppress).length > 0;
+}
+
+export function adjustScoreForRankingHints(
+    baseScore: number,
+    item: RankingHintNodeRef,
+    hints?: TicketRankingHints
+): number {
+    if (!hasRankingHints(hints)) {
+        return baseScore;
+    }
+
+    const haystack = nodeHaystack(item);
+    const boosted = matchedHintTerms(haystack, hints!.boost);
+    const suppressed = matchedHintTerms(haystack, hints!.suppress);
+
+    return (
+        baseScore +
+        boosted.length * BOOST_SCORE_PER_TERM -
+        suppressed.length * SUPPRESS_PENALTY_PER_TERM
+    );
 }
 
 function matchedHintTerms(haystack: string, terms: string[]): string[] {

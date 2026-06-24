@@ -157,13 +157,69 @@ const GENERIC_FILE_BASENAMES = new Set([
     "layout",
 ]);
 
+const GENERIC_SEED_LABELS = new Set([
+    "content",
+    "module",
+    "modules",
+    "service",
+    "services",
+    "controller",
+    "controllers",
+    "backend",
+    "frontend",
+    "common",
+    "shared",
+    "domain",
+    "http",
+    "console",
+    "commands",
+    "command",
+    "integration",
+    "apps",
+    "spott",
+    "resources",
+    "views",
+    "assets",
+    "jobs",
+    "job",
+    "listener",
+    "listeners",
+    "provider",
+    "providers",
+]);
+
+function addSeedLabel(labels: Set<string>, value: string): void {
+    const normalized = value.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (normalized.length >= 5 && !GENERIC_SEED_LABELS.has(normalized)) {
+        labels.add(normalized);
+    }
+}
+
+const QUEUE_FLOW_PATH_ALLOW =
+    /listener|sqs|queue|consumer|job|archive|expired|vod|recording|ExpiredVod|ProcessExpired|ListenerCommand/i;
+const QUEUE_FLOW_PATH_DENY =
+    /PlayerSetting|RelatedContent|ModuleContent|ContentAccess|player-setting|related-content|module\/\{param\}\/content|content\/\{param\}\/player/i;
+
+function isQueueRelevantFlowPath(path: TicketFlowPath, seedLabels: string[]): boolean {
+    if (flowPathMatchesSeed(path, seedLabels)) {
+        return true;
+    }
+
+    const pathLower = path.path.toLowerCase();
+    if (QUEUE_FLOW_PATH_DENY.test(pathLower) && !QUEUE_FLOW_PATH_ALLOW.test(pathLower)) {
+        return false;
+    }
+
+    return QUEUE_FLOW_PATH_ALLOW.test(pathLower);
+}
+
 function seedLabelsFromContext(context: FlowPathFilterContext): string[] {
     const labels = new Set<string>();
 
     for (const seedId of context.seedNodeIds) {
         const componentName = seedId.split("::").pop();
         if (componentName && componentName.length >= 5 && !componentName.includes("@")) {
-            labels.add(componentName.toLowerCase());
+            addSeedLabel(labels, componentName);
         }
 
         if (seedId.includes(".vue")) {
@@ -171,12 +227,10 @@ function seedLabelsFromContext(context: FlowPathFilterContext): string[] {
             const filePart = pathParts.pop()?.split("::")[0]?.toLowerCase().replace(/\.vue$/i, "") ?? "";
             const parentPart = pathParts.pop()?.toLowerCase().replace(/[^a-z0-9]/g, "") ?? "";
 
-            if (parentPart.length >= 5) {
-                labels.add(parentPart);
-            }
+            addSeedLabel(labels, parentPart);
 
             if (filePart.length >= 5 && !GENERIC_FILE_BASENAMES.has(filePart)) {
-                labels.add(filePart);
+                addSeedLabel(labels, filePart);
             }
         }
     }
@@ -190,12 +244,10 @@ function seedLabelsFromContext(context: FlowPathFilterContext): string[] {
         const basename = parts.pop()?.toLowerCase().replace(/\.(vue|tsx?|jsx?)$/i, "") ?? "";
         const parent = parts.pop()?.toLowerCase().replace(/[^a-z0-9]/g, "") ?? "";
 
-        if (parent.length >= 5) {
-            labels.add(parent);
-        }
+        addSeedLabel(labels, parent);
 
         if (basename.length >= 5 && !GENERIC_FILE_BASENAMES.has(basename)) {
-            labels.add(basename);
+            addSeedLabel(labels, basename);
         }
     }
 
@@ -208,6 +260,10 @@ function flowPathMatchesSeed(path: TicketFlowPath, seedLabels: string[]): boolea
 }
 
 function scoreFlowPathRelevance(path: TicketFlowPath, context: FlowPathFilterContext, seedLabels: string[]): number {
+    if (context.workflowType === "queue" && !isQueueRelevantFlowPath(path, seedLabels)) {
+        return 0;
+    }
+
     if (flowPathMatchesSeed(path, seedLabels)) {
         return 100;
     }
@@ -221,6 +277,10 @@ function scoreFlowPathRelevance(path: TicketFlowPath, context: FlowPathFilterCon
     const tokenScore = countTokenOverlap(path.path, tokens);
 
     if (tokenScore <= 0) {
+        return context.workflowType === "queue" && QUEUE_FLOW_PATH_ALLOW.test(path.path) ? 40 : 0;
+    }
+
+    if (context.workflowType === "queue" && path.complete && !QUEUE_FLOW_PATH_ALLOW.test(path.path)) {
         return 0;
     }
 

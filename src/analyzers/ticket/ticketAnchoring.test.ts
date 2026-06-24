@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { buildTicketAnchorContext } from "./ticketAnchoring";
 import { extractTicketRoutes, matchRouteAnchoredEndpoints, normalizeTicketRoutePath } from "./ticketRouteAnchoring";
-import { extractSymbolAnchors, nodeMatchesSymbolAnchor } from "./ticketSymbolAnchors";
+import { extractSymbolAnchors, nodeMatchesSymbolAnchor, scoreSymbolAnchorMatch } from "./ticketSymbolAnchors";
 import { TicketGraphContext } from "./ticketGraphContext";
 
 function mockGraph(): TicketGraphContext {
@@ -109,6 +109,25 @@ Modules\\ClientManagement\\UiTranslations\\Domain\\UiTranslationsService`;
     );
 }
 
+function testLooseSymbolMatchScoresLowerThanExact(): void {
+    const anchors = extractSymbolAnchors("Hero Teaser uses heroTeaser:hero layout");
+
+    const exact = scoreSymbolAnchorMatch(
+        "js:apps/spott-frontend/resources/assets/js/v3/cells/heroTeaser/index.vue::HeroTeaser",
+        "apps/spott-frontend/resources/assets/js/v3/cells/heroTeaser/index.vue",
+        anchors
+    );
+    const loose = scoreSymbolAnchorMatch(
+        "SpOTTBackend\\Page\\Module::isHeroTeaserModule",
+        "apps/spott-backend/app/Page/Module.php",
+        anchors
+    );
+
+    assert.ok(exact > 0);
+    assert.ok(loose > 0);
+    assert.ok(exact > loose, "exact ticket entity should outrank loose substring match");
+}
+
 function run(): void {
     console.log("ticket anchoring tests\n");
 
@@ -120,6 +139,9 @@ function run(): void {
 
     testRouteAndSymbolAnchoring();
     console.log("  ✓ route and symbol anchoring");
+
+    testLooseSymbolMatchScoresLowerThanExact();
+    console.log("  ✓ loose symbol matches score lower than exact entity");
 
     console.log("\nAll ticket anchoring tests passed.");
 }

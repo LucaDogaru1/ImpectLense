@@ -81,6 +81,43 @@ function normalize(value: string): string {
     return value.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+/** Queue/SQS/archive jobs — not "VOD & Recording" as a content type. */
+export function isQueueLifecycleTicket(ticketText: string): boolean {
+    const lower = normalize(ticketText);
+    return /sqs|queue message|queue name|arn:aws:sqs|listener|consumer|consume the sqs|process.*job|expired.*object|archive.*job|notification.*bucket|filepath.*bucket|file path.*bucket|moved to deleted|moved to archive/i.test(
+        lower
+    );
+}
+
+/** Admin/export/reporting asks — list fields, link migrated data, etc. */
+export function isReportingExportTicket(ticketText: string): boolean {
+    const lower = normalize(ticketText);
+    return (
+        /\bexport (?:a )?list\b|\bplease export\b|\bexport all\b|\bprovide a list\b|\blink the migrated\b|\bwe need:\b/i.test(
+            lower
+        ) || (/^\s*-\s+/m.test(ticketText) && /\bexport\b|\blist of all\b/i.test(lower))
+    );
+}
+
+/** CMS / content-manager surfaces (lists, editors), not queue infrastructure. */
+export function isCmsContentSurfaceTicket(ticketText: string): boolean {
+    const lower = normalize(ticketText);
+    return /\bcms\b|content list|content manager|contentmanager|listed on cms/i.test(lower);
+}
+
+/** VOD/recording as content domain wording without queue infra (common false queue signal). */
+export function isContentDomainWithoutQueueTicket(ticketText: string): boolean {
+    const lower = normalize(ticketText);
+    if (isQueueLifecycleTicket(lower)) {
+        return false;
+    }
+
+    return (
+        /\bvod\b.*\brecording\b|\brecording\b.*\bvod\b|vod & recording|vod and recording/i.test(lower) ||
+        (/\brecording\b/i.test(lower) && isCmsContentSurfaceTicket(lower))
+    );
+}
+
 export function scoreWorkflows(ticketText: string, tokens: string[]): WorkflowScore[] {
     const lower = normalize(ticketText);
     const keywordSet = new Set(tokens.map(token => token.toLowerCase()));
@@ -88,8 +125,8 @@ export function scoreWorkflows(ticketText: string, tokens: string[]): WorkflowSc
 
     const workflowSignals: Record<Exclude<WorkflowType, "unknown">, { strong: string[]; medium: string[]; weak: string[] }> = {
         import: {
-            strong: ["nightly import", "xml feed", "csv import", "external provider", "import process"],
-            medium: ["import", "imported", "feed", "provider", "transformer", "mapping", "ingest", "xml", "csv"],
+            strong: ["nightly import", "xml feed", "csv import", "external provider", "import process", "data sync"],
+            medium: ["import", "imported", "feed", "provider", "transformer", "mapping", "ingest", "xml", "csv", "migrated"],
             weak: ["parse", "sync", "batch"],
         },
         api: {
@@ -108,9 +145,9 @@ export function scoreWorkflows(ticketText: string, tokens: string[]): WorkflowSc
             weak: ["periodic", "recurring"],
         },
         ui: {
-            strong: ["cms editor", "display in cms", "visible in cms", "cms detail"],
-            medium: ["ui", "cms", "editor", "dashboard", "screen", "display"],
-            weak: ["visible", "filter", "review", "show"],
+            strong: ["cms editor", "display in cms", "visible in cms", "cms detail", "cms - content list", "content list"],
+            medium: ["ui", "cms", "editor", "dashboard", "screen", "display", "content manager"],
+            weak: ["visible", "filter", "review", "show", "listed"],
         },
         migration: {
             strong: ["database migration", "schema migration", "alter table"],
@@ -144,9 +181,38 @@ export function scoreWorkflows(ticketText: string, tokens: string[]): WorkflowSc
             reasons.push("boost: explicit queue notification");
         }
 
-        if (type === "queue" && /filepath|file path|s3|bucket|deleted|expired|recording/i.test(lower)) {
+        if (
+            type === "queue" &&
+            isQueueLifecycleTicket(lower) &&
+            /filepath|file path|s3|bucket|deleted|expired|recording/i.test(lower)
+        ) {
             score += 40;
             reasons.push("boost: storage deletion event payload");
+        }
+
+        if (type === "queue" && isContentDomainWithoutQueueTicket(ticketText)) {
+            score -= 55;
+            reasons.push("penalty: vod/recording content domain without queue infrastructure");
+        }
+
+        if (type === "queue" && isReportingExportTicket(ticketText) && !isQueueLifecycleTicket(ticketText)) {
+            score -= 45;
+            reasons.push("penalty: export/reporting task is not a queue workflow");
+        }
+
+        if (type === "import" && /data sync|link the migrated|migrated content|provider data contains/i.test(lower)) {
+            score += 40;
+            reasons.push("boost: migration/data-sync linkage task");
+        }
+
+        if (type === "ui" && isCmsContentSurfaceTicket(ticketText)) {
+            score += 35;
+            reasons.push("boost: cms/content-list surface");
+        }
+
+        if (type === "ui" && isReportingExportTicket(ticketText)) {
+            score += 25;
+            reasons.push("boost: export/reporting from product surface");
         }
 
         if (
@@ -188,6 +254,9 @@ export function scoreWorkflows(ticketText: string, tokens: string[]): WorkflowSc
     const sorted = scores.sort((a, b) => b.score - a.score || a.type.localeCompare(b.type));
     const top = sorted[0]?.score ?? 0;
     const second = sorted[1]?.score ?? 0;
+    const ambiguousTask =
+        isReportingExportTicket(ticketText) ||
+        (isContentDomainWithoutQueueTicket(ticketText) && !isQueueLifecycleTicket(ticketText));
 
     return sorted.map(item => {
         if (item.score <= 0 || top <= 0) {
@@ -199,6 +268,10 @@ export function scoreWorkflows(ticketText: string, tokens: string[]): WorkflowSc
         else if (item.score === top && top >= second * 1.5) confidence = 0.8;
         else if (item.score === top && top > second) confidence = 0.65;
         else confidence = Math.max(0.25, (item.score / Math.max(top, 1)) * 0.6);
+
+        if (item.score === top && ambiguousTask && top < second * 1.8) {
+            confidence = Math.min(confidence, 0.65);
+        }
 
         return {
             ...item,

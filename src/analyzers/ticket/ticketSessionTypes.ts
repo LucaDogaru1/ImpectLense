@@ -3,6 +3,7 @@ import { TicketAnalyzerResult } from "./ticketAnalyzerV3";
 import { FieldLayerStatus } from "./ticketClaims";
 import { TicketChangeArea } from "./ticketIntent";
 import type { TicketRankingHints } from "./ticketRankingHints";
+import type { TicketClassification } from "./ticketClassification";
 
 /** Graph surfaces included in analysis. JS will be added when frontend scanning lands. */
 export type GraphScope = "php" | "js";
@@ -82,6 +83,7 @@ export interface TicketBriefing {
     skip: Array<{ id: string; reason: string }>;
     verify: string[];
     warnings: string[];
+    classification?: TicketClassification;
 }
 
 export interface TicketSessionInput {
@@ -94,6 +96,8 @@ export interface TicketSessionInput {
     rankingHints?: TicketRankingHints;
     /** Skip intent questions and infer from ticket text (--non-interactive). */
     skipIntent?: boolean;
+    /** Pre-computed classification shown in briefing; does not auto-apply answers. */
+    classification?: TicketClassification;
 }
 
 export interface TicketSessionState {

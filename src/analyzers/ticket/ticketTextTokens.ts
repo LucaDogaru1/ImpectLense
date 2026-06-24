@@ -110,6 +110,51 @@ export function extractFieldPathTerms(ticketText: string): string[] {
     return [...paths];
 }
 
+const TITLE_LINE_PREFIX = /^(title|description|acceptance criteria|summary|to do)\b/i;
+
+function ticketMentionsHttpRoute(ticketText: string): boolean {
+    return (
+        ticketText.match(
+            /\b(GET|POST|PUT|PATCH|DELETE)\s+(?:api\/v\d+\/)?[a-z0-9][a-z0-9./_{}<>\-]*/gi
+        )?.length ?? 0
+    ) > 0;
+}
+
+export function ticketHasConcreteAnchors(ticketText: string): boolean {
+    if (ticketMentionsHttpRoute(ticketText)) {
+        return true;
+    }
+
+    if (extractFieldPathTerms(ticketText).length > 0) {
+        return true;
+    }
+
+    if (/`[^`]+`/.test(ticketText)) {
+        return true;
+    }
+
+    if (/\.(vue|php|tsx?|jsx?)\b/i.test(ticketText)) {
+        return true;
+    }
+
+    if (/\bModules\\[A-Za-z0-9\\]+/.test(ticketText)) {
+        return true;
+    }
+
+    for (const line of ticketText.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed || TITLE_LINE_PREFIX.test(trimmed)) {
+            continue;
+        }
+
+        if (/\b[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+\b/.test(trimmed)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 export function countTokenOverlap(haystack: string, tokens: string[]): number {
     const normalized = haystack.toLowerCase();
     let score = 0;

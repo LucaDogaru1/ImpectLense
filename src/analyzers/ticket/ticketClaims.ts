@@ -1,5 +1,6 @@
 import { DominantWorkflow } from "./ticketWorkflow";
 import { fieldNamesMatch, haystackContainsField } from "../../shared/fieldNameMatching";
+import { ticketHasConcreteAnchors } from "./ticketTextTokens";
 import { getNodesOfTypes, type DbEdgeRow, type DbNodeRow } from "./ticketGraphContext";
 
 export interface FieldLayerIndexes {
@@ -455,6 +456,12 @@ export function buildTicketClaims(input: {
 
     if (input.workflow.confidence < 0.65) {
         warnings.push(`Primary workflow '${input.workflow.type}' is uncertain — verify entrypoint manually`);
+    }
+
+    if (!ticketHasConcreteAnchors(input.ticketText)) {
+        warnings.push(
+            "Ticket lacks concrete code anchors — treat read-first as triage only; verify frontend/backend/queue/db layer in code"
+        );
     }
 
     const notFoundInGraph: string[] = [...infrastructureGaps];

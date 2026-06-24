@@ -19,6 +19,14 @@ const COMMANDS: Record<string, CommandDef> = {
         script: "commands/ticket.ts",
         description: "Same as ticket",
     },
+    "ticket:classify": {
+        script: "commands/ticketClassify.ts",
+        description: "Classify ticket text before analyze:ticket (alias: classify:ticket)",
+    },
+    "classify:ticket": {
+        script: "commands/ticketClassify.ts",
+        description: "Same as ticket:classify",
+    },
     "ai-context": {
         script: "commands/aiContext.ts",
         description: "Compact report for one symbol (alias: analyze:ai-context)",
@@ -118,8 +126,9 @@ function printHelp(): void {
     console.log(`
 Examples:
   impactlens scan /path/to/repo --lang=both --output=both
+  impactlens ticket:classify --ticket=tickets/issue.txt
   impactlens ticket sqlite/Graph.sqlite --ticket=tickets/issue.txt --scopes=php,js \\
-    --answers=ticket_topic:ui,change_includes:cms_ui
+    --answers=ticket_topic:ui,change_includes:cms_ui --non-interactive
   impactlens ai-context sqlite/Graph.sqlite "App\\\\Services\\\\Foo::bar" --compact
 
 List commands only:  impactlens --commands

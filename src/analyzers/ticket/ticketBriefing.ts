@@ -2,12 +2,24 @@ import { TicketAnalyzerResult } from "./ticketAnalyzerV3";
 import { filterFlowPathsForBriefing, TicketFlowPath } from "./ticketFlowPaths";
 import { routeLabelsFromAnchors } from "./ticketRouteAnchoring";
 import { formatIntentLabel } from "./ticketIntent";
+import { formatClassificationBriefingSection } from "./ticketClassification";
+import type { TicketClassification } from "./ticketClassification";
+import {
+    adjustScoreForRankingHints,
+    hasRankingHints,
+    isSuppressedByRankingHints,
+    type TicketRankingHints,
+} from "./ticketRankingHints";
 import { TicketBriefing, TicketProbeResult, TicketSessionResolved } from "./ticketSessionTypes";
 import {
     countTokenOverlap,
     extractDistinctiveTicketTokens,
     pathSegmentTokenOverlap,
 } from "./ticketTextTokens";
+import {
+    getBestSymbolAnchorMatchKind,
+    isOneTimeOrCleanupCommand,
+} from "./ticketSymbolAnchors";
 
 const STRONG_UI_MATCH_THRESHOLD = 5;
 
@@ -68,6 +80,158 @@ function isReadFirstCandidate(
 function isVueOrJsTarget(item: { id: string; file: string | null }): boolean {
     const haystack = `${item.id} ${item.file ?? ""}`;
     return /\.vue::|vue_component|\/cells\/|\/components\/|\/views\/|frontend\//i.test(haystack);
+}
+
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isExplicitlyNamedInTicket(item: ReadFirstItem, ticketText: string): boolean {
+    const ticketLower = ticketText.toLowerCase();
+    const candidates = new Set<string>();
+
+    const idTail = item.id.split("\\").pop()?.split("::").pop()?.split("@")[0];
+    if (idTail) {
+        candidates.add(idTail);
+    }
+
+    const className = item.id.split("\\").pop()?.split("::")[0];
+    if (className) {
+        candidates.add(className);
+    }
+
+    const fileBase = item.file?.split(/[/\\]/).pop()?.replace(/\.(php|vue|tsx?|jsx?)$/i, "");
+    if (fileBase) {
+        candidates.add(fileBase);
+    }
+
+    for (const candidate of candidates) {
+        if (candidate.length < 6) {
+            continue;
+        }
+
+        if (new RegExp(`\\b${escapeRegExp(candidate)}\\b`, "i").test(ticketText)) {
+            return true;
+        }
+
+        const kebab = candidate.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+        if (kebab.length >= 6 && ticketLower.includes(kebab)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function isLooseUiReadFirstItem(
+    item: ReadFirstItem,
+    ticketText: string,
+    anchorSymbols: string[],
+    strongUiIds: Set<string>
+): boolean {
+    if (strongUiIds.has(item.id) || isVueOrJsTarget(item) || isExplicitlyNamedInTicket(item, ticketText)) {
+        return false;
+    }
+
+    const anchorKind = getBestSymbolAnchorMatchKind(item.id, item.file, anchorSymbols);
+    if (anchorKind === "loose") {
+        return true;
+    }
+
+    return anchorKind !== "exact";
+}
+
+function computeUiReadFirstSortScore(
+    item: ReadFirstItem,
+    ticketText: string,
+    scoreById: Map<string, number>,
+    options: { strongUiIds: Set<string>; anchorSymbols: string[] }
+): number {
+    let score = scoreById.get(item.id) ?? 0;
+
+    if (options.strongUiIds.has(item.id)) {
+        return score + 12000;
+    }
+
+    if (isVueOrJsTarget(item)) {
+        score += 9000;
+        const haystack = `${item.id} ${item.file ?? ""}`;
+        if (/\/cells\//.test(haystack)) {
+            score += 800;
+        }
+        if (/\.vue::/.test(haystack)) {
+            score += 400;
+        }
+    }
+
+    if (isExplicitlyNamedInTicket(item, ticketText)) {
+        score += 7000;
+    }
+
+    const anchorKind = getBestSymbolAnchorMatchKind(item.id, item.file, options.anchorSymbols);
+    if (anchorKind === "exact") {
+        score += 5000;
+    } else if (anchorKind === "loose") {
+        score += 800;
+    }
+
+    if (isOneTimeOrCleanupCommand(item.id, item.file) && !isExplicitlyNamedInTicket(item, ticketText)) {
+        score -= 8000;
+    }
+
+    if (!isVueOrJsTarget(item) && !isExplicitlyNamedInTicket(item, ticketText) && anchorKind !== "exact") {
+        score -= 3000;
+    }
+
+    return score;
+}
+
+function enforceLooseAnchorMaxRank(
+    items: ReadFirstItem[],
+    maxRank: number,
+    isLoose: (item: ReadFirstItem) => boolean
+): ReadFirstItem[] {
+    if (items.length === 0) {
+        return items;
+    }
+
+    const tight: ReadFirstItem[] = [];
+    const loose: ReadFirstItem[] = [];
+
+    for (const item of items) {
+        (isLoose(item) ? loose : tight).push(item);
+    }
+
+    const headCount = Math.max(0, maxRank - 1);
+    return [...tight.slice(0, headCount), ...tight.slice(headCount), ...loose].slice(0, items.length);
+}
+
+export interface ReadFirstMergeOptions {
+    workflowType?: string;
+    strongUiIds?: Set<string>;
+    anchorSymbols?: string[];
+}
+
+function mergeUiReadFirstWithoutHints(
+    primary: ReadFirstItem[],
+    secondary: ReadFirstItem[],
+    limit: number,
+    ticketText: string,
+    scoreById: Map<string, number>,
+    anchorSymbols: string[],
+    strongUiIds: Set<string>
+): ReadFirstItem[] {
+    const combined = dedupeReadFirstItems([...primary, ...secondary]);
+    const sorted = [...combined].sort(
+        (left, right) =>
+            computeUiReadFirstSortScore(right, ticketText, scoreById, { strongUiIds, anchorSymbols }) -
+            computeUiReadFirstSortScore(left, ticketText, scoreById, { strongUiIds, anchorSymbols })
+    );
+
+    const collapsed = collapseReadFirstByFile(sorted, limit, ticketText, scoreById);
+    return enforceLooseAnchorMaxRank(collapsed, 3, item =>
+        isLooseUiReadFirstItem(item, ticketText, anchorSymbols, strongUiIds)
+    );
 }
 
 function extractStrongUiTokens(ticketText: string): string[] {
@@ -153,17 +317,11 @@ export function findStrongUiReadFirstCandidates(
         }));
 }
 
-function mergeReadFirst(
-    primary: ReadFirstItem[],
-    secondary: ReadFirstItem[],
-    limit = 5,
-    ticketText?: string,
-    scoreById?: Map<string, number>
-): ReadFirstItem[] {
+function dedupeReadFirstItems(items: ReadFirstItem[], maxItems?: number): ReadFirstItem[] {
     const seen = new Set<string>();
     const merged: ReadFirstItem[] = [];
 
-    for (const item of [...primary, ...secondary]) {
+    for (const item of items) {
         if (seen.has(item.id)) {
             continue;
         }
@@ -171,12 +329,72 @@ function mergeReadFirst(
         seen.add(item.id);
         merged.push(item);
 
-        if (merged.length >= limit * 3) {
+        if (maxItems !== undefined && merged.length >= maxItems) {
             break;
         }
     }
 
-    return collapseReadFirstByFile(merged, limit, ticketText, scoreById);
+    return merged;
+}
+
+function mergeReadFirst(
+    primary: ReadFirstItem[],
+    secondary: ReadFirstItem[],
+    limit = 5,
+    ticketText?: string,
+    scoreById?: Map<string, number>
+): ReadFirstItem[] {
+    return collapseReadFirstByFile(
+        dedupeReadFirstItems([...primary, ...secondary], limit * 3),
+        limit,
+        ticketText,
+        scoreById
+    );
+}
+
+export function mergeReadFirstCandidates(
+    primary: ReadFirstItem[],
+    secondary: ReadFirstItem[],
+    limit = 5,
+    ticketText?: string,
+    scoreById?: Map<string, number>,
+    rankingHints?: TicketRankingHints,
+    mergeOptions?: ReadFirstMergeOptions
+): ReadFirstItem[] {
+    if (hasRankingHints(rankingHints)) {
+        const combined = dedupeReadFirstItems([...primary, ...secondary]).filter(
+            item => !isSuppressedByRankingHints(item, rankingHints)
+        );
+
+        const adjustedScoreById = new Map<string, number>();
+        for (const item of combined) {
+            adjustedScoreById.set(
+                item.id,
+                adjustScoreForRankingHints(scoreById?.get(item.id) ?? 0, item, rankingHints)
+            );
+        }
+
+        const sorted = [...combined].sort(
+            (left, right) =>
+                (adjustedScoreById.get(right.id) ?? 0) - (adjustedScoreById.get(left.id) ?? 0)
+        );
+
+        return collapseReadFirstByFile(sorted, limit, ticketText, adjustedScoreById);
+    }
+
+    if (mergeOptions?.workflowType === "ui" && ticketText) {
+        return mergeUiReadFirstWithoutHints(
+            primary,
+            secondary,
+            limit,
+            ticketText,
+            scoreById ?? new Map(),
+            mergeOptions.anchorSymbols ?? [],
+            mergeOptions.strongUiIds ?? new Set<string>()
+        );
+    }
+
+    return mergeReadFirst(primary, secondary, limit, ticketText, scoreById);
 }
 
 function symbolEntryPriority(id: string): number {
@@ -276,7 +494,8 @@ function formatFlowPathLines(flowPaths: TicketFlowPath[]): string[] {
 export function buildTicketBriefing(
     analysis: TicketAnalyzerResult,
     probe: TicketProbeResult,
-    resolved: TicketSessionResolved
+    resolved: TicketSessionResolved,
+    classification?: TicketClassification
 ): TicketBriefing {
     const structuralIds = new Set(probe.structuralCandidates.map(item => item.id));
     const workflowType = resolved.lockedWorkflow ?? analysis.workflow.type;
@@ -302,9 +521,15 @@ export function buildTicketBriefing(
         intentOpen,
         workflowType,
     });
-    const scoreById = new Map(
-        [...analysis.investigationTargets, ...analysis.matchedFrontend].map(item => [item.id, item.score])
-    );
+    const scoreById = new Map<string, number>();
+    for (const item of [
+        ...analysis.investigationTargets,
+        ...analysis.matchedFrontend,
+        ...(analysis.anchorContext?.anchoredTargets ?? []),
+    ]) {
+        const existing = scoreById.get(item.id) ?? 0;
+        scoreById.set(item.id, Math.max(existing, item.score));
+    }
     const anchoredReadFirst =
         intentOpen
             ? []
@@ -313,12 +538,19 @@ export function buildTicketBriefing(
                   file: item.file,
                   reason: item.reason.split(" | ")[0] ?? item.reason,
               })) ?? [];
-    const readFirst = mergeReadFirst(
-        [...anchoredReadFirst, ...strongUiMatches],
+    const strongUiIds = new Set(strongUiMatches.map(item => item.id));
+    const readFirst = mergeReadFirstCandidates(
+        [...strongUiMatches, ...anchoredReadFirst],
         workflowFiltered,
         5,
         analysis.query,
-        scoreById
+        scoreById,
+        analysis.rankingHints,
+        {
+            workflowType,
+            strongUiIds,
+            anchorSymbols: analysis.anchorContext?.symbols ?? [],
+        }
     );
     const flowPaths = filterFlowPathsForBriefing(rawFlowPaths, {
         ticketText: analysis.query,
@@ -406,6 +638,16 @@ export function buildTicketBriefing(
     const markdown = [
         "# Ticket Briefing (AI context pack)",
         "",
+        ...(classification
+            ? [
+                  ...formatClassificationBriefingSection(classification, {
+                      ticket_topic: resolved.confirmedTopic,
+                      change_includes: resolved.changeIncludes,
+                      scopes: resolved.scopes,
+                  }),
+                  "",
+              ]
+            : []),
         "## Session",
         ...(intentLabel ? [`- User intent: **${intentLabel}**`] : []),
         `- Workflow: **${workflowLabel}** (${analysis.workflow.confidence})`,
@@ -457,5 +699,6 @@ export function buildTicketBriefing(
         skip,
         verify,
         warnings,
+        classification,
     };
 }

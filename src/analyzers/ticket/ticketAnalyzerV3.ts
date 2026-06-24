@@ -28,13 +28,14 @@ import {
     calculateEntrypointConfidence,
     calculateGraphCoverageConfidence,
 } from "./ticketTargetRerank";
-import { extractDistinctiveTicketTokens, pathSegmentTokenOverlap } from "./ticketTextTokens";
+import { extractDistinctiveTicketTokens, pathSegmentTokenOverlap, ticketHasConcreteAnchors } from "./ticketTextTokens";
 import {
     buildTicketAnchorContext,
     genericBaseConfigPenalty,
     prependAnchoredTargets,
     type TicketAnchorContext,
 } from "./ticketAnchoring";
+import { extractFieldAnchorTerms } from "./ticketFieldAnchoring";
 import { isGenericBaseConfigWithoutAnchor, scoreSymbolAnchorMatch } from "./ticketSymbolAnchors";
 import {
     applyRankingHintsToInvestigationTargets,
@@ -356,7 +357,9 @@ export function analyzeTicket(
     const limit = options?.limit ?? 20;
 
     const baseTokens = tokenize(ticketText);
-    const fieldTerms = extractFieldLikeTerms(ticketText);
+    const fieldTerms = [
+        ...new Set([...extractFieldLikeTerms(ticketText), ...extractFieldAnchorTerms(ticketText)]),
+    ];
     const intent = extractTicketIntent(ticketText);
     const truncated = isTicketTruncated(ticketText);
 
@@ -612,7 +615,8 @@ export function analyzeTicket(
         workflow,
         truncated,
         rerankedMethods,
-        entrypointConfidence
+        entrypointConfidence,
+        ticketText
     );
 
     const relatedSymbols = buildRelatedSymbols(
@@ -2273,7 +2277,8 @@ function calculateImplementationConfidence(
     workflow: DominantWorkflow,
     truncated: boolean,
     methods: TicketMatchedNode[],
-    entrypointConfidence = 0
+    entrypointConfidence = 0,
+    ticketText = ""
 ): number {
     let score = navigationConfidence * 0.35 + entrypointConfidence * 0.35;
 
@@ -2294,6 +2299,10 @@ function calculateImplementationConfidence(
     );
 
     if (!hasAlignedTopMethod) score -= 0.15;
+
+    if (ticketText && !ticketHasConcreteAnchors(ticketText)) {
+        score = Math.min(score, 0.58);
+    }
 
     return Number(Math.max(0, Math.min(score, 0.9)).toFixed(2));
 }

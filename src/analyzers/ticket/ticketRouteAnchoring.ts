@@ -10,18 +10,20 @@ export interface TicketRouteRef {
 }
 
 const HTTP_METHOD_PATTERN = /\b(GET|POST|PUT|PATCH|DELETE)\b/gi;
+const CONTENT_WRITE_METHODS = new Set(["POST", "PUT", "PATCH"]);
+const ACCESS_PATH_SEGMENT = /^(access|check-access|drm-license|drm-token)$/i;
 
 export function extractTicketRoutes(ticketText: string): TicketRouteRef[] {
     const routes = new Map<string, TicketRouteRef>();
 
     for (const match of ticketText.matchAll(
-        /\b(GET|POST|PUT|PATCH|DELETE)\s+(?:api\/v\d+\/)?([a-z0-9][a-z0-9./_{}-]*)/gi
+        /\b(GET|POST|PUT|PATCH|DELETE)\s+(?:api\/v\d+\/)?([a-z0-9][a-z0-9./_{}<>\-]*)/gi
     )) {
         addRoute(routes, match[1], match[2]);
     }
 
     for (const match of ticketText.matchAll(
-        /\b(GET|POST|PUT|PATCH|DELETE)\s+…\/([a-z0-9][a-z0-9./_{}-]*)/gi
+        /\b(GET|POST|PUT|PATCH|DELETE)\s+…\/([a-z0-9][a-z0-9./_{}<>\-]*)/gi
     )) {
         addRoute(routes, match[1], match[2]);
     }
@@ -29,14 +31,38 @@ export function extractTicketRoutes(ticketText: string): TicketRouteRef[] {
     return [...routes.values()];
 }
 
+export function normalizeRoutePlaceholderPath(rawPath: string): string {
+    return rawPath
+        .replace(/<[^>]+>/g, "{param}")
+        .replace(/\{[^}]+\}/g, "{param}")
+        .replace(/\/+/g, "/")
+        .replace(/^\/+/, "")
+        .replace(/\/+$/, "");
+}
+
+export function routeMentionsAccess(route: TicketRouteRef): boolean {
+    return ACCESS_PATH_SEGMENT.test(route.path) || /\/access\b/i.test(route.path);
+}
+
+export function isAccessSubpathEndpoint(path: string): boolean {
+    const segments = normalizeTicketRoutePath(path)
+        .split("/")
+        .filter(Boolean)
+        .map(segment => segment.replace(/^\{param\}$/i, "{param}"));
+
+    return segments.some(segment => ACCESS_PATH_SEGMENT.test(segment.replace(/[{}]/g, "")));
+}
+
 function addRoute(routes: Map<string, TicketRouteRef>, method: string, rawPath: string): void {
-    const cleaned = rawPath
-        .replace(/…/g, "")
-        .replace(/\s+is\b.*$/i, "")
-        .replace(/\s+with\b.*$/i, "")
-        .replace(/\s+without\b.*$/i, "")
-        .replace(/\s+/g, "")
-        .trim();
+    const cleaned = normalizeRoutePlaceholderPath(
+        rawPath
+            .replace(/…/g, "")
+            .replace(/\s+is\b.*$/i, "")
+            .replace(/\s+with\b.*$/i, "")
+            .replace(/\s+without\b.*$/i, "")
+            .replace(/\s+/g, "")
+            .trim()
+    );
 
     const path = normalizeTicketRoutePath(cleaned);
     if (!path || path.length < 3) {
@@ -60,19 +86,89 @@ export function normalizeTicketRoutePath(path: string): string {
     ).replace(/^\/+/, "");
 }
 
-function pathsMatch(endpointPath: string, ticketPath: string): boolean {
-    const left = normalizeTicketRoutePath(endpointPath);
-    const right = normalizeTicketRoutePath(ticketPath);
+function normalizeRouteSegment(segment: string): string {
+    return segment.replace(/^\{param\}$/i, "{param}").toLowerCase();
+}
 
-    if (!left || !right) {
-        return false;
-    }
+function segmentsMatch(leftSegment: string, rightSegment: string): boolean {
+    const left = normalizeRouteSegment(leftSegment);
+    const right = normalizeRouteSegment(rightSegment);
 
     if (left === right) {
         return true;
     }
 
-    return left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+    if (left === "{param}" || right === "{param}") {
+        return true;
+    }
+
+    if (left.endsWith("s") && left.slice(0, -1) === right) {
+        return true;
+    }
+
+    if (right.endsWith("s") && right.slice(0, -1) === left) {
+        return true;
+    }
+
+    return false;
+}
+
+function routePathSegments(path: string): string[] {
+    return normalizeTicketRoutePath(path)
+        .split("/")
+        .filter(Boolean)
+        .map(normalizeRouteSegment);
+}
+
+function methodsCompatible(ticketMethod: string, endpointMethod: string, ticketPath: string): boolean {
+    if (ticketMethod === endpointMethod) {
+        return true;
+    }
+
+    if (!CONTENT_WRITE_METHODS.has(ticketMethod) || !CONTENT_WRITE_METHODS.has(endpointMethod)) {
+        return false;
+    }
+
+    const segments = routePathSegments(ticketPath);
+    return segments.length > 0 && /^contents?$/.test(segments[0]!);
+}
+
+function pathsMatch(endpointPath: string, ticketPath: string, ticketRoute?: TicketRouteRef): boolean {
+    const leftSegments = routePathSegments(endpointPath);
+    const rightSegments = routePathSegments(ticketPath);
+
+    if (leftSegments.length === 0 || rightSegments.length === 0) {
+        return false;
+    }
+
+    const leftKey = leftSegments.join("/");
+    const rightKey = rightSegments.join("/");
+
+    if (leftKey === rightKey) {
+        return true;
+    }
+
+    const shorter = rightSegments.length <= leftSegments.length ? rightSegments : leftSegments;
+    const longer = rightSegments.length <= leftSegments.length ? leftSegments : rightSegments;
+    const prefixMatches = shorter.every((segment, index) => segmentsMatch(longer[index] ?? "", segment));
+
+    if (!prefixMatches) {
+        return false;
+    }
+
+    const extraSegments = longer.slice(shorter.length);
+    if (
+        extraSegments.some(segment => ACCESS_PATH_SEGMENT.test(segment.replace(/[{}]/g, ""))) &&
+        !(ticketRoute && routeMentionsAccess(ticketRoute))
+    ) {
+        return false;
+    }
+
+    if (rightSegments.length <= leftSegments.length) {
+        return true;
+    }
+
+    return leftSegments.every((segment, index) => segmentsMatch(rightSegments[index] ?? "", segment));
 }
 
 function resolveRoutesToHandler(
@@ -118,20 +214,26 @@ export function matchRouteAnchoredEndpoints(
                 continue;
             }
 
-            if (parsed.method !== route.method) {
+            if (!methodsCompatible(route.method, parsed.method, route.path)) {
                 continue;
             }
 
-            if (!pathsMatch(parsed.path, route.path)) {
+            if (isAccessSubpathEndpoint(parsed.path) && !routeMentionsAccess(route)) {
                 continue;
             }
+
+            if (!pathsMatch(parsed.path, route.path, route)) {
+                continue;
+            }
+
+            const routeScore = scoreRouteAnchorMatch(route, parsed.method, parsed.path);
 
             matches.push({
                 id: endpoint.id,
                 type: endpoint.type,
                 name: endpoint.name,
                 file: endpoint.file,
-                score: 2000,
+                score: routeScore,
                 reason: `Route anchor: ${route.raw}`,
             });
 
@@ -139,7 +241,7 @@ export function matchRouteAnchoredEndpoints(
             if (handler) {
                 matches.push({
                     ...handler,
-                    score: 2200,
+                    score: routeScore + 200,
                     reason: `Route anchor handler for ${route.raw}`,
                 });
             }
@@ -196,4 +298,24 @@ function dedupeMatches(items: TicketMatchedNode[]): TicketMatchedNode[] {
     }
 
     return result.sort((left, right) => right.score - left.score);
+}
+
+function scoreRouteAnchorMatch(route: TicketRouteRef, endpointMethod: string, endpointPath: string): number {
+    let score = 2000;
+
+    if (route.method === endpointMethod) {
+        score += 100;
+    }
+
+    if (isAccessSubpathEndpoint(endpointPath)) {
+        score -= 1500;
+    }
+
+    const endpointSegments = routePathSegments(endpointPath);
+    const ticketSegments = routePathSegments(route.path);
+    if (endpointSegments.join("/") === ticketSegments.join("/")) {
+        score += 300;
+    }
+
+    return score;
 }

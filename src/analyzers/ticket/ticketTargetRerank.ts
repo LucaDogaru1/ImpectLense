@@ -57,6 +57,14 @@ export function applyWorkflowTargetRerank(
                     boost += 220;
                 }
 
+                if (
+                    /\/access\/|::access\b|access\/\{param\}/i.test(haystack) &&
+                    fieldPaths.length > 0 &&
+                    !/\/access\b|\bcheck-access\b/i.test(ticketLower)
+                ) {
+                    penalty += 450;
+                }
+
                 if (genericOnlyController) {
                     penalty += 150;
                 }

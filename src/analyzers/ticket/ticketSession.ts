@@ -5,7 +5,6 @@ import {
     buildIntentQuestions,
     formatIntentForEnrichment,
     hasIntentAnswers,
-    inferIntentAnswers,
 } from "./ticketIntent";
 import { loadTicketGraphContext, type TicketGraphContext } from "./ticketGraphContext";
 import { probeTicket } from "./ticketProbe";
@@ -68,7 +67,9 @@ function runFinalAnalysis(
     db: SQLiteDatabase,
     session: TicketSessionState,
     graph: TicketGraphContext,
-    options?: Pick<TicketAnalyzerOptions, "limit" | "includeDebug" | "rankingHints">
+    options?: Pick<TicketAnalyzerOptions, "limit" | "includeDebug" | "rankingHints"> & {
+        classification?: import("./ticketClassification").TicketClassification;
+    }
 ): { analysis: TicketAnalyzerResult; briefing: ReturnType<typeof buildTicketBriefing> } {
     const enrichedTicket = enrichTicketForAnalysis(session.ticketText, session.resolved);
     const analysis = analyzeTicket(db, enrichedTicket, {
@@ -77,7 +78,12 @@ function runFinalAnalysis(
         rankingHints: options?.rankingHints,
         graph,
     });
-    const briefing = buildTicketBriefing(analysis, session.probe!, session.resolved);
+    const briefing = buildTicketBriefing(
+        analysis,
+        session.probe!,
+        session.resolved,
+        options?.classification
+    );
 
     return { analysis, briefing };
 }
@@ -133,7 +139,9 @@ function runScanPhase(
     answers: Record<string, string>,
     round: number,
     graph?: TicketGraphContext,
-    options?: Pick<TicketAnalyzerOptions, "limit" | "includeDebug" | "rankingHints">
+    options?: Pick<TicketAnalyzerOptions, "limit" | "includeDebug" | "rankingHints"> & {
+        classification?: import("./ticketClassification").TicketClassification;
+    }
 ): TicketSessionStartResult {
     const ctx = graph ?? loadTicketGraphContext(db);
     let session = buildSessionState(
@@ -206,18 +214,34 @@ export function startTicketSession(
     }
 
     if (input.skipIntent && !hasIntentAnswers(answers)) {
-        answers = { ...answers, ...inferIntentAnswers(input.ticketText) };
+        const questions = buildIntentQuestions(input.ticketText).filter(
+            question => question.id === "ticket_topic" || question.id === "change_includes"
+        );
+
+        return {
+            status: "needs_input",
+            session: buildSessionState(input.ticketText, scopes, answers, 0, "intent"),
+            questions,
+        };
     }
 
     const graph = loadTicketGraphContext(db);
-    return runScanPhase(db, input.ticketText, scopes, answers, 1, graph, input);
+    return runScanPhase(db, input.ticketText, scopes, answers, 1, graph, {
+        limit: input.limit,
+        includeDebug: input.includeDebug,
+        rankingHints: input.rankingHints,
+        classification: input.classification,
+    });
 }
 
 export function continueTicketSession(
     db: SQLiteDatabase,
     session: TicketSessionState,
     newAnswers: Record<string, string>,
-    options?: Pick<TicketAnalyzerOptions, "limit" | "includeDebug" | "rankingHints"> & { graph?: TicketGraphContext }
+    options?: Pick<TicketAnalyzerOptions, "limit" | "includeDebug" | "rankingHints"> & {
+        graph?: TicketGraphContext;
+        classification?: import("./ticketClassification").TicketClassification;
+    }
 ): TicketSessionContinueResult {
     const mergedAnswers = { ...session.answers, ...newAnswers };
 

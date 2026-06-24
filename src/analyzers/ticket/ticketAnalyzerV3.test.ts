@@ -5,6 +5,10 @@ import Database from "better-sqlite3";
 import { analyzeTicket } from "./ticketAnalyzerV3";
 import {
     calculateDominantWorkflow,
+    isCmsContentSurfaceTicket,
+    isContentDomainWithoutQueueTicket,
+    isQueueLifecycleTicket,
+    isReportingExportTicket,
     isTicketTruncated,
     isWorkflowAlignedEntrypoint,
     scoreWorkflows,
@@ -15,6 +19,31 @@ const sqlitePath = path.join(projectRoot, "sqlite/Graph.sqlite");
 
 function readTicket(name: string): string {
     return fs.readFileSync(path.join(projectRoot, "tickets", name), "utf8");
+}
+
+function readVagueTicket(name: string): string {
+    return fs.readFileSync(path.join(projectRoot, "tickets/vague", name), "utf8");
+}
+
+function testWorkflowContextGuards(): void {
+    const exportTicket = readVagueTicket("redsport-vod-recording-export.txt");
+
+    assert.equal(isReportingExportTicket(exportTicket), true);
+    assert.equal(isCmsContentSurfaceTicket(exportTicket), true);
+    assert.equal(isContentDomainWithoutQueueTicket(exportTicket), true);
+    assert.equal(isQueueLifecycleTicket(exportTicket), false);
+
+    const exportScores = scoreWorkflows(exportTicket, ["vod", "recording", "export", "cms", "content", "sync"]);
+    const exportWorkflow = calculateDominantWorkflow(exportScores);
+
+    assert.notEqual(exportWorkflow.type, "queue", `expected non-queue workflow, got ${exportWorkflow.type}`);
+    assert.ok(["ui", "import"].includes(exportWorkflow.type), `expected ui or import, got ${exportWorkflow.type}`);
+
+    const queueTicket = readTicket("other.txt");
+    assert.equal(isQueueLifecycleTicket(queueTicket), true);
+    const queueScores = scoreWorkflows(queueTicket, ["sqs", "queue", "recording", "filepath"]);
+    const queueWorkflow = calculateDominantWorkflow(queueScores);
+    assert.equal(queueWorkflow.type, "queue");
 }
 
 function testWorkflowDetection(): void {
@@ -277,6 +306,9 @@ function testFieldLayersOnDemoGraph(): void {
 
 function run(): void {
     console.log("ticketAnalyzerV3 tests\n");
+
+    testWorkflowContextGuards();
+    console.log("  ✓ workflow context guards");
 
     testWorkflowDetection();
     console.log("  ✓ workflow detection");

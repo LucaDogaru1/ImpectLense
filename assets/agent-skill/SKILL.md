@@ -1,22 +1,30 @@
 ---
 name: impactlens
 description: >-
-  Run ImpactLens ticket analysis with inferred --answers (never unsure on readable
-  tickets), optional --boost/--suppress, then ai-context or change-impact from
-  the briefing. Use for tickets, blast radius, UI→API flows, Graph.sqlite, or
-  impactlens CLI.
+  Always run ticket:classify before analyze:ticket. Review classification JSON,
+  decide --answers and --scopes, then analyze with --non-interactive. Optional
+  --boost/--suppress, then ai-context or change-impact from the briefing. Use for
+  tickets, blast radius, UI→API flows, Graph.sqlite, or impactlens CLI.
 ---
 
 # ImpactLens — agent playbook
 
-> **Never use `unsure` on readable tickets.** Always pass `--answers=ticket_topic:…,change_includes:…`. Skipping intent ranks the wrong workflow (e.g. queue jobs on a CMS/UI ticket).
+## Required workflow (do not skip)
+
+**Never run `analyze:ticket` / `impactlens ticket` before `ticket:classify`.**
+
+```text
+1. impactlens ticket:classify --ticket=…     ← always first
+2. Read JSON: summary, ticket_topic, change_includes, scopes, confidence, reasons
+3. Decide --answers and --scopes (override when confidence ≤ 0.55)
+4. impactlens ticket sqlite/Graph.sqlite --ticket=… --scopes=… --answers=… --non-interactive
+5. Read briefing → ai-context / change-impact on read-first symbols
+```
+
+Do not infer `--answers` from the filename, ticket path, or memory.  
+If you skip step 1, `--non-interactive` analyze will stop and ask you to classify first.
 
 ImpactLens returns a **compact markdown briefing** from a pre-built graph. **Ticket = spec; graph = navigation.**
-
-1. Read ticket → infer intent
-2. `impactlens ticket` with `--answers` (+ `--boost`/`--suppress` if noisy)
-3. Open **read-first** files (max 3–5)
-4. `ai-context` / `change-impact` on one symbol — before grep or manual tracing
 
 Assume `sqlite/Graph.sqlite` exists. **Do not re-scan** unless the graph is missing or the user asks.
 
@@ -27,16 +35,46 @@ If graph and ticket disagree: **trust the ticket** → use graph to locate code 
 
 ---
 
-## Run ticket analysis
+## Step 1 — Classify (required)
+
+```bash
+impactlens ticket:classify --ticket=tickets/example.txt
+```
+
+JSON output (default):
+
+```json
+{
+  "summary": "…",
+  "ticket_topic": "ui",
+  "change_includes": "cms_ui",
+  "scopes": ["php", "js"],
+  "confidence": 0.72,
+  "reasons": ["hero", "cms", "ui surface"]
+}
+```
+
+Review `confidence` and `reasons`. Override suggestions when the ticket is ambiguous (confidence ≤ 0.55).
+
+Markdown + suggested flags: `impactlens ticket:classify --ticket=… --markdown`
+
+---
+
+## Step 2 — Analyze with your chosen answers
 
 ```bash
 impactlens ticket sqlite/Graph.sqlite \
   --ticket=tickets/example.txt \
   --scopes=php,js \
-  --answers=ticket_topic:<id>,change_includes:<id> \
+  --answers=ticket_topic:ui,change_includes:cms_ui \
+  --non-interactive \
   --boost=SlidePresetDropdown,slidePreset \
   --suppress=vertical-promotion
 ```
+
+The briefing includes a **Ticket classification** section (suggestions vs applied answers).
+
+If you omit `--answers` with `--non-interactive`, the CLI exits with classification output only — no graph scan.
 
 Default output is the **briefing** (token-efficient). Use `--full` only when debugging ranking.
 
@@ -95,7 +133,9 @@ Nuxt monorepos need `impactlens.config.json` package aliases — see package `do
 
 **Mappings:** hero CMS spec → `ui,cms_ui` · SQS archive → `queue,queue_job` · slide preset UI + API filter → `ui,mixed`
 
-Always set explicit `--answers` yourself from the ticket text. Use `--non-interactive` only for automation or scripting (skips prompts when answers are already complete).
+Use classification output as the default suggestion. Override when confidence is low or ticket context disagrees.
+
+Always set explicit `--answers` yourself after reviewing `ticket:classify`. `--non-interactive` requires complete `--answers`; it does not auto-guess.
 
 ---
 
@@ -130,13 +170,16 @@ impactlens impact sqlite/Graph.sqlite "<symbol>" --limit=20        # deeper + in
 | `risk` / `hotspots` | Repo-wide risk, no specific ticket target |
 | `cycles` / `dead-code` | Cleanup tasks, not feature tickets |
 
-**Sequence:** ticket → read-first → pick symbol → `ai-context` → `change-impact` (if editing) → implement
+**Sequence:** classify → analyze:ticket → read-first → pick symbol → `ai-context` → `change-impact` (if editing) → implement
 
 ---
 
 ## Do not
 
-- `unsure` or omit `--answers` on readable tickets
+- Run `impactlens ticket` / `analyze:ticket` before `ticket:classify`
+- Skip `ticket:classify` and guess `--answers` from the filename or path
+- Omit `--answers` on `--non-interactive` analyze:ticket (CLI will stop after classification)
+- Use `unsure` on readable tickets unless classification confidence is very low
 - Paste `Graph.json` or `--full` output into chat
 - Re-scan every ticket
 - Treat unrelated `[complete]` paths as in-scope

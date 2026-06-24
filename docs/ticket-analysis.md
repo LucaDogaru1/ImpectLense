@@ -2,9 +2,19 @@
 
 `analyze:ticket` maps ticket text to ranked graph nodes and produces an **AI briefing** (read-first list, flow paths, warnings).
 
-Default mode runs a **session**: intent questions → graph probe → briefing. **Interactive by default** — use `--non-interactive` (or `--auto`) for easy tickets and CI. Use `--legacy` for the older direct analyzer output.
+**Agents:** run `ticket:classify` first, review the JSON, decide `--answers` and `--scopes`, then run `analyze:ticket`. The briefing includes the classification section (suggestions vs applied answers).
+
+Default mode runs a **session**: intent questions → graph probe → briefing. **Interactive by default** — use `--non-interactive` with explicit `--answers` from classification review. Use `--legacy` for the older direct analyzer output.
 
 ## Quick start
+
+### 1. Classify
+
+```bash
+npm run classify:ticket -- --ticket=tickets/example.txt
+```
+
+### 2. Analyze (after choosing answers)
 
 Default output is the **AI briefing only** — optimized for pasting into an LLM. Use `--full` for raw matches and evidence.
 
@@ -12,16 +22,17 @@ Default output is the **AI briefing only** — optimized for pasting into an LLM
 npm run analyze:ticket -- sqlite/Graph.sqlite \
   --ticket=tickets/example.txt \
   --scopes=php,js \
-  --answers=ticket_topic:ui,change_includes:mixed
+  --answers=ticket_topic:ui,change_includes:cms_ui \
+  --non-interactive
 ```
 
 Add `--full` when debugging ranking.
 
 | Flag | Purpose |
 |---|---|
-| `--scopes=php,js` | Include PHP and JS graph nodes (auto-detects js when available) |
-| `--non-interactive` | Infer intent and skip prompts (alias: `--auto`) |
-| `--answers=...` | Pre-fill specific answers (works with either mode) |
+| `--scopes=php,js` | Graph scopes (defaults from classification when `--answers` set and `--scopes` omitted) |
+| `--non-interactive` | Skip prompts; **requires** `--answers` from classification review |
+| `--answers=...` | Required in `--non-interactive` — do not omit |
 | `--boost=term,...` | Agent hint: boost graph nodes matching these symbols or path segments |
 | `--suppress=term,...` | Agent hint: demote or drop nodes matching these terms |
 | `--full` | Briefing + detailed analysis sections |

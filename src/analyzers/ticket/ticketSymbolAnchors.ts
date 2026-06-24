@@ -112,6 +112,68 @@ export function nodeMatchesSymbolAnchor(
     return haystack.includes(needle);
 }
 
+function primarySymbolCompact(nodeId: string, file: string | null): string {
+    const fromId = nodeId.split("\\").pop()?.split("::").pop()?.split("@")[0] ?? "";
+    if (fromId) {
+        return compactAnchor(fromId);
+    }
+
+    const fromFile = file?.split(/[/\\]/).pop()?.replace(/\.(php|vue|tsx?|jsx?)$/i, "") ?? "";
+    return compactAnchor(fromFile);
+}
+
+type SymbolAnchorMatchKind = "exact" | "loose";
+
+export function getBestSymbolAnchorMatchKind(
+    nodeId: string,
+    file: string | null,
+    anchors: string[]
+): SymbolAnchorMatchKind | null {
+    let best: SymbolAnchorMatchKind | null = null;
+
+    for (const anchor of anchors) {
+        const kind = classifySymbolAnchorMatch(nodeId, file, anchor);
+        if (kind === "exact") {
+            return "exact";
+        }
+
+        if (kind === "loose") {
+            best = "loose";
+        }
+    }
+
+    return best;
+}
+
+export function isOneTimeOrCleanupCommand(nodeId: string, file: string | null): boolean {
+    const haystack = `${nodeId} ${file ?? ""}`;
+    return /\\OneTime\\|Console\\Commands\\.*Cleanup|^integration:.*Cleanup|Cleanup[A-Z]/i.test(haystack);
+}
+
+function classifySymbolAnchorMatch(
+    nodeId: string,
+    file: string | null,
+    anchor: string
+): SymbolAnchorMatchKind | null {
+    if (!nodeMatchesSymbolAnchor(nodeId, file, anchor)) {
+        return null;
+    }
+
+    const needle = compactAnchor(anchor);
+    const primary = primarySymbolCompact(nodeId, file);
+
+    if (primary === needle) {
+        return "exact";
+    }
+
+    const fileBase = compactAnchor(file?.split(/[/\\]/).pop()?.replace(/\.(php|vue|tsx?|jsx?)$/i, "") ?? "");
+    if (fileBase === needle) {
+        return "exact";
+    }
+
+    return "loose";
+}
+
 export function scoreSymbolAnchorMatch(
     nodeId: string,
     file: string | null,
@@ -120,14 +182,25 @@ export function scoreSymbolAnchorMatch(
     let best = 0;
 
     for (const anchor of anchors) {
-        if (!nodeMatchesSymbolAnchor(nodeId, file, anchor)) {
+        const matchKind = classifySymbolAnchorMatch(nodeId, file, anchor);
+        if (!matchKind) {
             continue;
         }
 
         const compact = compactAnchor(anchor);
-        const idCompact = compactAnchor(nodeId);
 
-        if (idCompact.includes(compact) && compact.length >= 10) {
+        if (matchKind === "loose") {
+            if (isOneTimeOrCleanupCommand(nodeId, file)) {
+                best = Math.max(best, 120);
+            } else {
+                const looseScore =
+                    /controller|command|console|listener|job|service/i.test(nodeId) ? 250 : 350;
+                best = Math.max(best, looseScore);
+            }
+            continue;
+        }
+
+        if (compact.length >= 10) {
             best = Math.max(best, 1200);
         } else if (compact.length >= 8) {
             best = Math.max(best, 900);
@@ -152,6 +225,7 @@ export function findSymbolAnchoredNodes(
         "api_endpoint",
         "method",
         "class",
+        "vue_component",
         "integration_entrypoint",
     ]);
 

@@ -10,9 +10,14 @@ import {
 } from "../../analyzers/ticket/ticketAnalyzerV3";
 import {
     hasIntentAnswers,
-    inferIntentAnswers,
     INTENT_SESSION_INTRO,
 } from "../../analyzers/ticket/ticketIntent";
+import {
+    classifyTicket,
+    classificationToSuggestedFlags,
+    formatClassificationMarkdown,
+    type TicketClassification,
+} from "../../analyzers/ticket/ticketClassification";
 import {
     continueTicketSession,
     startTicketSession,
@@ -25,6 +30,7 @@ import {
 import { toBulletList } from "../../shared/formatting/text";
 import { buildRankingHints, hasRankingHints } from "../../analyzers/ticket/ticketRankingHints";
 import { getIntOption, getOptionValue, hasFlag } from "../shared/cliArgs";
+import { readTicketFile, resolveTicketPath, TICKET_INPUT_HELP } from "../shared/ticketInput";
 
 type TicketRenderPayload = TicketAnalyzerResult & {
     limit: number;
@@ -41,7 +47,7 @@ type RenderableNode = {
 const dbPath = process.argv[2];
 const args = process.argv.slice(3);
 
-const ticketPath = getOptionValue(args, "--ticket");
+const ticketPath = resolveTicketPath(args);
 const limit = getIntOption(args, "--limit", 5, 1);
 const jsonOutput = hasFlag(args, "--json");
 const outputPath = getOptionValue(args, "--output");
@@ -62,21 +68,11 @@ const sessionOptions = {
 };
 
 function resolveTicketText(): string {
-    if (!ticketPath?.trim()) {
-        return "";
-    }
-
-    const resolved = path.resolve(ticketPath);
-    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
-        console.log(`Ticket file not found: ${ticketPath}`);
-        process.exit(2);
-    }
-
-    return fs.readFileSync(resolved, "utf8");
+    return readTicketFile(ticketPath).text;
 }
 
 function resolveTicketSource(): string {
-    return ticketPath ? path.resolve(ticketPath) : "--ticket";
+    return ticketPath?.trim() ? path.resolve(ticketPath) : "--ticket";
 }
 
 function inferDefaultScopes(db: Database): Array<"php" | "js"> {
@@ -485,28 +481,30 @@ async function promptForAnswers(
     return answers;
 }
 
-async function runSessionFlow(db: Database): Promise<string> {
+async function runSessionFlow(
+    db: Database,
+    classification: TicketClassification
+): Promise<string> {
     const ticketText = resolveTicketText();
-    const scopes = parseScopes(scopesArg, db);
     const presetAnswers = parseAnswers(getOptionValue(args, "--answers"));
+    const scopes = scopesArg
+        ? parseScopes(scopesArg, db)
+        : hasIntentAnswers(presetAnswers)
+          ? classification.scopes
+          : parseScopes(undefined, db);
 
     let result = startTicketSession(db, {
         ticketText,
         scopes,
         answers: presetAnswers,
+        classification,
+        skipIntent: nonInteractive,
         ...sessionOptions,
     });
 
     while (result.status === "needs_input") {
         if (!interactive) {
             const autoAnswers: Record<string, string> = {};
-
-            if (
-                result.session.phase === "intent" &&
-                !hasIntentAnswers({ ...presetAnswers, ...result.session.answers })
-            ) {
-                Object.assign(autoAnswers, inferIntentAnswers(result.session.ticketText));
-            }
 
             Object.assign(
                 autoAnswers,
@@ -525,10 +523,16 @@ async function runSessionFlow(db: Database): Promise<string> {
             );
 
             if (Object.keys(newAnswers).length === 0) {
+                if (result.session.phase === "intent") {
+                    return renderClassificationRequired(classification, presetAnswers);
+                }
                 return renderProbeSummary(result);
             }
 
-            result = continueTicketSession(db, result.session, newAnswers, sessionOptions);
+            result = continueTicketSession(db, result.session, newAnswers, {
+                ...sessionOptions,
+                classification,
+            });
             continue;
         }
 
@@ -536,7 +540,10 @@ async function runSessionFlow(db: Database): Promise<string> {
             showIntentIntro: result.session.phase === "intent",
         });
 
-        result = continueTicketSession(db, result.session, answers, sessionOptions);
+        result = continueTicketSession(db, result.session, answers, {
+            ...sessionOptions,
+            classification,
+        });
 
         if (result.status === "needs_input" && answers.truncated_ack === "no") {
             return renderProbeSummary(result);
@@ -566,6 +573,38 @@ async function runSessionFlow(db: Database): Promise<string> {
     return result.briefing.markdown;
 }
 
+function renderClassificationRequired(
+    classification: TicketClassification,
+    presetAnswers: Record<string, string>
+): string {
+    const suggested = classificationToSuggestedFlags(classification);
+    const lines = [
+        "# Ticket Analysis — classification required",
+        "",
+        "Run `impactlens ticket:classify` first, review the output, then rerun analyze:ticket with explicit flags.",
+        "",
+        formatClassificationMarkdown(classification),
+        "",
+        "## Next step",
+        "",
+        "Pass `--answers` and `--scopes` based on your review (override suggestions when confidence is low):",
+        "",
+        "```bash",
+        `impactlens ticket sqlite/Graph.sqlite \\`,
+        `  --ticket=<path> \\`,
+        `  --scopes=${suggested.scopes} \\`,
+        `  --answers=${suggested.answers} \\`,
+        `  --non-interactive`,
+        "```",
+    ];
+
+    if (Object.keys(presetAnswers).length > 0) {
+        lines.push("", `Partial --answers provided: ${JSON.stringify(presetAnswers)}`);
+    }
+
+    return lines.join("\n");
+}
+
 if (!dbPath) {
     console.log([
         "Usage: npx tsx src/cli/commands/ticket.ts Graph.sqlite [options]",
@@ -574,9 +613,9 @@ if (!dbPath) {
         "  --ticket=path        Path to ticket text file (e.g. tickets/my-ticket.txt)",
         "",
         "Session (interactive by default; briefing-only output unless --full):",
-        "  --scopes=php,js      Graph scopes (auto-detects js when graph has Vue/JS nodes)",
-        "  --non-interactive    Infer intent and skip prompts (also --auto)",
-        "  --answers=q:id,...   Pre-fill answers (works with either mode)",
+        "  --scopes=php,js      Graph scopes (defaults from classification when --answers set)",
+        "  --non-interactive    Skip prompts; requires --answers from ticket:classify review",
+        "  --answers=q:id,...   Required in --non-interactive (decide after ticket:classify)",
         "  --boost=term,...     Agent hint: boost nodes matching these symbols/paths",
         "  --suppress=term,...  Agent hint: demote or drop nodes matching these terms",
         "  --full               Briefing + detailed analysis (raw matches, evidence)",
@@ -591,9 +630,15 @@ if (!dbPath) {
 const ticketText = resolveTicketText();
 
 if (ticketText.trim().length === 0) {
-    console.log("No ticket file provided. Use --ticket=tickets/my-ticket.txt");
+    console.log([
+        "No ticket file provided.",
+        "",
+        TICKET_INPUT_HELP,
+    ].join("\n"));
     process.exit(2);
 }
+
+const classification = classifyTicket(ticketText);
 
 const db = new Database(dbPath);
 
@@ -625,11 +670,53 @@ async function main(): Promise<void> {
             return;
         }
 
-        const markdown = await runSessionFlow(db);
+        if (nonInteractive && !hasIntentAnswers(parseAnswers(getOptionValue(args, "--answers")))) {
+            const markdown = renderClassificationRequired(
+                classification,
+                parseAnswers(getOptionValue(args, "--answers"))
+            );
+
+            if (jsonOutput) {
+                const outputJson = JSON.stringify(
+                    {
+                        status: "needs_answers",
+                        message:
+                            "Review ticket:classify output, decide --answers and --scopes, then rerun analyze:ticket.",
+                        classification,
+                    },
+                    null,
+                    2
+                );
+                console.log(outputJson);
+                if (outputPath) fs.writeFileSync(outputPath, outputJson, "utf8");
+            } else {
+                console.log(markdown);
+                if (outputPath) fs.writeFileSync(outputPath, markdown, "utf8");
+            }
+
+            process.exit(2);
+        }
+
+        const markdown = await runSessionFlow(db, classification);
 
         if (jsonOutput) {
-            console.log(JSON.stringify({ markdown }, null, 2));
-            if (outputPath) fs.writeFileSync(outputPath, JSON.stringify({ markdown }, null, 2), "utf8");
+            console.log(
+                JSON.stringify(
+                    {
+                        classification,
+                        markdown,
+                    },
+                    null,
+                    2
+                )
+            );
+            if (outputPath) {
+                fs.writeFileSync(
+                    outputPath,
+                    JSON.stringify({ classification, markdown }, null, 2),
+                    "utf8"
+                );
+            }
             return;
         }
 
