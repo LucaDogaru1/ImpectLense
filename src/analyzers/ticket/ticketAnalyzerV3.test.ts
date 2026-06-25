@@ -233,6 +233,26 @@ function testImportTicketAnalysis(): void {
     }
 }
 
+function testLowInformationTicketSkipsRanking(): void {
+    const db = new Database(":memory:");
+
+    try {
+        const result = analyzeTicket(db, "write some ticket text on a page and make it work");
+
+        assert.equal(result.lowInformation, true);
+        assert.equal(result.navigationConfidence, 0);
+        assert.equal(result.implementationConfidence, 0);
+        assert.equal(result.investigationTargets.length, 0);
+        assert.equal(result.flowPaths.length, 0);
+        assert.equal(result.relatedSymbols.length, 0);
+        assert.ok(
+            result.claims.warnings.includes("No meaningful domain terms were extracted.")
+        );
+    } finally {
+        db.close();
+    }
+}
+
 function testApiTicketAnalysis(): void {
     if (!fs.existsSync(sqlitePath)) {
         console.log("  ↷ Skipping integration test — sqlite/Graph.sqlite not found");
@@ -333,6 +353,9 @@ function run(): void {
 
     testGeoTicketFiltersParameterNoise();
     console.log("  ✓ geo ticket noise filtering");
+
+    testLowInformationTicketSkipsRanking();
+    console.log("  ✓ low-information ticket skips ranking");
 
     testFieldLayersOnDemoGraph();
     console.log("  ✓ field layer graph semantics");

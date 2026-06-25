@@ -1,89 +1,111 @@
 ---
 name: impactlens
 description: >-
-  Read the ticket, decide ticket_topic and change_includes, run analyze:ticket
-  with inline --ticket text and --answers. Then ai-context or change-impact
-  from the briefing. Graph.sqlite, blast radius, UI→API flows.
+  Complement ticket reasoning with the code graph: ai-context, change-impact,
+  and impact for callers, callees, dependencies, and blast radius. Run
+  analyze:ticket only when the ticket has enough technical anchors for graph
+  navigation. Graph.sqlite, UI→API flows.
 ---
 
 # ImpactLens
 
-ImpactLens is a **code navigation tool**.
+ImpactLens is a **code graph navigation tool**. It complements your own ticket reading and repository search — it does not replace them.
 
-* Ticket = specification
-* Graph = navigation
-* Repository = source of truth
+* **You** understand the ticket and often find the first code anchor.
+* **ImpactLens** supplies repository knowledge you cannot infer from the ticket alone: callers, callees, dependencies, workflow connections, blast radius, architectural context.
+* **Repository code** is always the source of truth.
 
-Always verify graph results in the repository before implementing.
+Never treat any ImpactLens output as authoritative. Verify everything in code before implementing.
+
+---
+
+# When to use what
+
+| Situation | Use |
+|-----------|-----|
+| You already know a class, method, endpoint, route, or file | `ai-context`, `change-impact`, `impact` — skip `analyze:ticket` |
+| Ticket has technical anchors (endpoints, field paths, symbols, routes, namespaces) and you want graph-ranked entrypoints | `analyze:ticket` (optional), then graph commands from the briefing |
+| Ticket is vague natural language only | Do **not** run `analyze:ticket`; search the repo yourself, then use graph commands once you have a symbol |
+| You need blast radius or dependency context around a known symbol | `change-impact`, `impact`, `ai-context` |
+
+**Primary value:** the graph (`ai-context`, `change-impact`, `impact`), not mandatory ticket analysis.
 
 ---
 
 # Workflow
 
-## 1. Read the ticket and decide answers
+## 1. Read and understand the ticket
 
-Read the ticket text (from the user or issue). **You** choose:
+Read the ticket (user message, issue, or file). Decide:
 
-* `ticket_topic` — primary workflow
-* `change_includes` — main change surface
-* `scopes` — `php` or `php,js`
+* What workflow is involved (UI, API, queue, import, etc.)
+* Whether the ticket contains **enough technical context** for graph-based navigation to be meaningful
 
-**`ticket_topic`:** `ui` (CMS/layout/components) · `queue` (SQS/jobs/listeners) · `api` (endpoints/serialization) · `import` · `cron` · `migration` · `background` · `mixed`
+**Sufficient context examples:** API endpoints · request/response fields · dotted field paths · PascalCase/camelCase symbols · routes · namespaces · file paths · concrete feature names tied to code · technical acceptance criteria
 
-**`change_includes`:** `cms_ui` · `queue_job` · `api_field` · `persistence` · `backend_logic` · `import_pipeline` · `infra_new` · `mixed`
+**Insufficient context examples:** vague complaints (“page is slow”, “hero looks wrong”) with no symbols, routes, or field names — graph ticket analysis will return low-information results; use normal repo search instead.
 
-**`scopes`:** `php` — backend/Blade/Livewire only · `php,js` — Vue/Nuxt/CMS UI or UI→API flows
+If you already identified a likely class, method, endpoint, or file through reasoning or search, **skip `analyze:ticket`** and go straight to step 3.
 
 ---
 
-## 2. Analyze
+## 2. Analyze the ticket (optional)
 
-Pass the **ticket text** inline (not only a file path):
+Run `analyze:ticket` **only when** the ticket has technical anchors that make graph ranking worthwhile.
+
+Pass ticket text inline (not only a file path):
 
 ```bash
 impactlens ticket sqlite/Graph.sqlite \
-  --ticket="Hero teaser: full-width layout on homepage, slide preset dropdown" \
+  --ticket="GET /api/v1/slide-presets — add slidePreset filter to HeroTeaser CMS cell" \
   --scopes=php,js \
   --answers=ticket_topic:ui,change_includes:cms_ui \
   --non-interactive
 ```
 
-File paths still work when a ticket file exists: `--ticket=tickets/example.txt`
+**`ticket_topic`:** `ui` · `queue` · `api` · `import` · `cron` · `migration` · `background` · `mixed`
 
-Use `--boost` or `--suppress` only if important ticket entities are buried by unrelated matches.
+**`change_includes`:** `cms_ui` · `queue_job` · `api_field` · `persistence` · `backend_logic` · `import_pipeline` · `infra_new` · `mixed`
+
+**`scopes`:** `php` (backend only) · `php,js` (Vue/Nuxt/CMS UI or UI→API flows)
+
+File paths work when a ticket file exists: `--ticket=tickets/example.txt`
+
+Use `--boost` or `--suppress` if important symbols are buried by unrelated matches.
+
+If the briefing reports no reliable technical anchors or zero confidence, **do not trust its file list** — continue with repository search, then use graph commands on symbols you verify.
+
+Read the briefing (when used) in this order: Read first → Flow paths → Warnings. Treat all suggestions as hypotheses.
 
 ---
 
-## 3. Investigate
+## 3. Investigate with the graph
 
-Read the briefing in this order:
-
-1. Read first
-2. Flow paths
-3. Warnings
-
-Open the suggested files before broader repository search.
+Once you have a symbol (from your own search or from an optional briefing):
 
 ```bash
 impactlens ai-context sqlite/Graph.sqlite "<symbol>" --compact
 impactlens change-impact sqlite/Graph.sqlite "<symbol>"
+impactlens impact sqlite/Graph.sqlite "<symbol>"
 ```
 
-Symbol ids (from briefing backticks): `SpOTTBackend\Services\Foo::bar` (PHP) · `js:apps/.../heroTeaser/index.vue::HeroTeaser` (Vue) · `api:GET:/slide-presets` (route)
+**Symbol id examples:** `SpOTTBackend\Services\Foo::bar` (PHP) · `js:apps/.../heroTeaser/index.vue::HeroTeaser` (Vue) · `api:GET:/slide-presets` (route)
+
+Use these to understand callers, callees, dependencies, and blast radius before changing code.
 
 ---
 
 ## 4. Implement
 
-Implement only after verifying the relevant code.
+Implement only after verifying the relevant code in the repository.
 
-If the graph is incomplete or misleading, continue with normal repository investigation.
+If the graph is incomplete or misleading, continue with normal investigation — ImpactLens is a navigation aid, not a decision engine.
 
 ---
 
-## 5. Feedback
+## 5. Feedback (optional)
 
-Append one JSON line to `.ai/impactlens/impactlens-feedback.jsonl` when you can judge final usefulness. Once per ticket.
+When you ran `analyze:ticket` and can judge usefulness, append one JSON line to `.ai/impactlens/impactlens-feedback.jsonl`. Once per ticket.
 
 ```json
 {
@@ -100,14 +122,15 @@ Append one JSON line to `.ai/impactlens/impactlens-feedback.jsonl` when you can 
 }
 ```
 
-Failure reasons: `wrong-workflow` · `wrong-files` · `missing-files` · `wrong-flow-path` · `no-useful-results`
+Failure reasons: `wrong-workflow` · `wrong-files` · `missing-files` · `wrong-flow-path` · `no-useful-results` · `skipped-ticket-analysis`
 
 ---
 
 ## Rules
 
-* Read the ticket and pass explicit `--answers` with `--non-interactive`.
+* **Do not** run `analyze:ticket` for every task — use it only when technical anchors make graph navigation meaningful.
+* Prefer `ai-context` / `change-impact` / `impact` when you already have a symbol.
+* If you run `analyze:ticket`, pass explicit `--answers` with `--non-interactive`.
 * Prefer inline `--ticket="…"` with the ticket text the user gave you.
-* Do not treat the graph as the source of truth.
-* Verify results in code before implementation.
-* Record feedback when the briefing can be meaningfully evaluated.
+* Never treat briefing output or graph output as source of truth — verify in code.
+* Record feedback when ticket analysis was used and can be meaningfully evaluated.

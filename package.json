@@ -1,6 +1,6 @@
 {
   "name": "impactlens",
-  "version": "1.0.9",
+  "version": "1.1.0",
   "description": "Static code graph scanner and ticket-driven briefing CLI for AI-assisted development. currently only supports php and js/vue",
   "main": "bin/impactlens.js",
   "bin": {
@@ -29,6 +29,7 @@
     "analyze:ticket": "tsx src/cli/commands/ticket.ts",
     "test:ticket-input": "tsx src/cli/shared/ticketInput.test.ts",
     "test:ticket": "tsx src/analyzers/ticket/ticketAnalyzerV3.test.ts",
+    "test:ticket-text-tokens": "tsx src/analyzers/ticket/ticketTextTokens.test.ts",
     "test:ticket-session": "tsx src/analyzers/ticket/ticketSession.test.ts",
     "test:ticket-briefing": "tsx src/analyzers/ticket/ticketBriefing.test.ts",
     "test:ticket-target-rerank": "tsx src/analyzers/ticket/ticketTargetRerank.test.ts",

@@ -28,7 +28,14 @@ import {
     calculateEntrypointConfidence,
     calculateGraphCoverageConfidence,
 } from "./ticketTargetRerank";
-import { extractDistinctiveTicketTokens, pathSegmentTokenOverlap, ticketHasConcreteAnchors } from "./ticketTextTokens";
+import {
+    assessTicketDomainInformation,
+    extractDistinctiveTicketTokens,
+    LOW_INFORMATION_WARNINGS,
+    pathSegmentTokenOverlap,
+    ticketHasConcreteAnchors,
+    type TicketDomainAssessment,
+} from "./ticketTextTokens";
 import {
     buildTicketAnchorContext,
     genericBaseConfigPenalty,
@@ -80,6 +87,8 @@ export interface TicketAnalyzerResult {
     rankingHints?: TicketRankingHints;
     implementationHints: string[];
     debug?: TicketAnalyzerDebug;
+    /** Ticket text lacked domain terms — graph ranking was skipped. */
+    lowInformation?: boolean;
 }
 
 export type TicketAction =
@@ -349,41 +358,143 @@ const ACTION_TOKENS = new Set([
     "contentids",
 ]);
 
+function buildLowInformationTicketResult(
+    ticketText: string,
+    intent: TicketIntent,
+    fieldTerms: string[],
+    truncated: boolean,
+    domainAssessment: TicketDomainAssessment,
+    options?: TicketAnalyzerOptions
+): TicketAnalyzerResult {
+    const workflow: DominantWorkflow = {
+        type: "unknown",
+        confidence: 0,
+        score: 0,
+        reasons: ["unknown workflow with no structural ticket signals and insufficient strong tokens"],
+        secondary: [],
+    };
+
+    const claims: TicketClaims = {
+        fromTicket: [],
+        codeHints: [],
+        notFoundInGraph: [],
+        doNotStartHere: [],
+        fieldStatuses: [],
+        infrastructureGaps: [],
+        warnings: [...LOW_INFORMATION_WARNINGS],
+    };
+
+    return {
+        query: ticketText,
+        tokens: domainAssessment.meaningfulTokens,
+        fieldTerms,
+        missingFieldTerms: [],
+        intent,
+        workflow,
+        matchedEndpoints: [],
+        matchedMethods: [],
+        matchedRequestFields: [],
+        matchedFrontend: [],
+        relatedFlows: [],
+        flowRoles: [],
+        flowPaths: [],
+        suggestedFiles: [],
+        confidence: 0,
+        navigationConfidence: 0,
+        implementationConfidence: 0,
+        entrypointConfidence: 0,
+        graphCoverageConfidence: 0,
+        relatedSymbols: [],
+        claims,
+        investigationTargets: [],
+        rankingHints: hasRankingHints(options?.rankingHints) ? options?.rankingHints : undefined,
+        implementationHints: [],
+        lowInformation: true,
+        debug: options?.includeDebug
+            ? {
+                endpointMatches: 0,
+                methodMatches: 0,
+                fieldMatches: 0,
+                flowEdges: 0,
+                tokenDocumentFrequency: {},
+            }
+            : undefined,
+    };
+}
+
 export function analyzeTicket(
     db: SQLiteDatabase,
     ticketText: string,
     options?: TicketAnalyzerOptions
 ): TicketAnalyzerResult {
     const limit = options?.limit ?? 20;
+    const rankingHints = options?.rankingHints;
+    const explicitBoostTerms = rankingHints?.boost ?? [];
 
-    const baseTokens = tokenize(ticketText);
     const fieldTerms = [
         ...new Set([...extractFieldLikeTerms(ticketText), ...extractFieldAnchorTerms(ticketText)]),
     ];
     const intent = extractTicketIntent(ticketText);
     const truncated = isTicketTruncated(ticketText);
 
-    const graph = options?.graph ?? loadTicketGraphContext(db);
-    const anchorContext = buildTicketAnchorContext(ticketText, graph, limit);
-    const anchorSymbols = anchorContext.symbols;
-    const rankingHints = options?.rankingHints;
-    const explicitBoostTerms = rankingHints?.boost ?? [];
-
-    const tokens = [...new Set([
-        ...baseTokens,
+    const preliminaryTokens = [...new Set([
+        ...tokenize(ticketText),
+        ...extractDistinctiveTicketTokens(ticketText),
         ...fieldTerms,
+        ...intent.fields,
         ...intent.entities,
         ...intent.statuses,
         ...intent.sources,
-        ...anchorSymbols.filter(symbol => symbol.length >= 6),
-        ...anchorContext.routes.flatMap(route => route.path.split("/").filter(segment => segment.length >= 4)),
         ...explicitBoostTerms,
     ])].filter(token =>
         explicitBoostTerms.includes(token) ||
         !NOISE_TOKENS.has(token.toLowerCase())
     );
 
-    const workflowScores = scoreWorkflows(ticketText, tokens);
+    const preliminaryWorkflow = calculateDominantWorkflow(
+        scoreWorkflows(ticketText, preliminaryTokens)
+    );
+
+    const domainAssessment = assessTicketDomainInformation({
+        ticketText,
+        workflowType: preliminaryWorkflow.type,
+        boostTerms: explicitBoostTerms,
+        entities: intent.entities,
+        fields: intent.fields,
+        fieldTerms,
+        sources: intent.sources,
+        actions: intent.actions,
+        statuses: intent.statuses,
+        strongMatchedTokens: strongMatchedTokens(preliminaryTokens),
+    });
+
+    if (domainAssessment.rejected) {
+        return buildLowInformationTicketResult(
+            ticketText,
+            intent,
+            fieldTerms,
+            truncated,
+            domainAssessment,
+            options
+        );
+    }
+
+    const tokens = preliminaryTokens;
+
+    const graph = options?.graph ?? loadTicketGraphContext(db);
+    const anchorContext = buildTicketAnchorContext(ticketText, graph, limit);
+    const anchorSymbols = anchorContext.symbols;
+
+    const tokensWithAnchors = [...new Set([
+        ...tokens,
+        ...anchorSymbols.filter(symbol => symbol.length >= 6),
+        ...anchorContext.routes.flatMap(route => route.path.split("/").filter(segment => segment.length >= 4)),
+    ])].filter(token =>
+        explicitBoostTerms.includes(token) ||
+        !NOISE_TOKENS.has(token.toLowerCase())
+    );
+
+    const workflowScores = scoreWorkflows(ticketText, tokensWithAnchors);
     const workflow = calculateDominantWorkflow(workflowScores);
 
     const allSearchableNodes = graph.nodes;
@@ -391,7 +502,7 @@ export function analyzeTicket(
     const allEdges = graph.edges;
     const tokenDocumentFrequency = buildTokenDocumentFrequency(
         allSearchableNodes,
-        tokens,
+        tokensWithAnchors,
         graph.haystackById
     );
     const missingFieldTerms = findMissingFieldTerms(graph.haystackById, fieldTerms);
@@ -405,7 +516,7 @@ export function analyzeTicket(
     const matchedEndpoints = findMatchingNodes(
         getNodesOfTypes(graph, ["api_endpoint"]),
         graph.haystackById,
-        tokens,
+        tokensWithAnchors,
         fieldTerms,
         intent,
         workflow,
@@ -419,7 +530,7 @@ export function analyzeTicket(
     const matchedMethods = findMatchingNodes(
         getNodesOfTypes(graph, ["method"]),
         graph.haystackById,
-        tokens,
+        tokensWithAnchors,
         fieldTerms,
         intent,
         workflow,
@@ -433,7 +544,7 @@ export function analyzeTicket(
     const matchedRequestFields = findMatchingNodes(
         getNodesOfTypes(graph, ["request_field", "validation_rule", "variable_field"]),
         graph.haystackById,
-        tokens,
+        tokensWithAnchors,
         fieldTerms,
         intent,
         workflow,
@@ -447,7 +558,7 @@ export function analyzeTicket(
     const matchedIntegrations = findMatchingNodes(
         getNodesOfTypes(graph, ["integration_entrypoint", "config_literal", "model_field", "response_field"]),
         graph.haystackById,
-        tokens,
+        tokensWithAnchors,
         fieldTerms,
         intent,
         workflow,
@@ -461,7 +572,7 @@ export function analyzeTicket(
     const matchedFrontend = findMatchingNodes(
         getNodesOfTypes(graph, ["vue_component", "vue_prop"]),
         graph.haystackById,
-        tokens,
+        tokensWithAnchors,
         fieldTerms,
         intent,
         workflow,
@@ -473,7 +584,7 @@ export function analyzeTicket(
     );
 
     const proximitySeeds = buildProximitySeedIds(
-        tokens,
+        tokensWithAnchors,
         matchedEndpoints,
         matchedMethods,
         matchedFrontend,
@@ -645,7 +756,7 @@ export function analyzeTicket(
 
     return {
         query: ticketText,
-        tokens,
+        tokens: tokensWithAnchors,
         fieldTerms,
         missingFieldTerms,
         intent,

@@ -3,8 +3,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { formatIntentForEnrichment } from "./ticketIntent";
 import { applyQuestionAnswer, mergeResolved } from "./ticketQuestions";
-import { collapseReadFirstByFile, findStrongUiReadFirstCandidates } from "./ticketBriefing";
+import { collapseReadFirstByFile, findStrongUiReadFirstCandidates, buildTicketBriefing, isLowSignalTicketBriefing } from "./ticketBriefing";
 import { filterFlowPathsForBriefing } from "./ticketFlowPaths";
+import { TicketAnalyzerResult } from "./ticketAnalyzerV3";
 
 const projectRoot = path.resolve(__dirname, "../../..");
 
@@ -115,6 +116,115 @@ function testCollapseReadFirstByFile(): void {
     assert.match(collapsed[1]!.id, /CallToAction$/);
 }
 
+function testLowSignalBriefingSuppressesRankedFiles(): void {
+    assert.equal(isLowSignalTicketBriefing("unknown", 0.3), true);
+    assert.equal(isLowSignalTicketBriefing("unknown", 0.45), false);
+    assert.equal(isLowSignalTicketBriefing("ui", 0.2), false);
+
+    const analysis = {
+        query: "the page feels slow",
+        workflow: { type: "unknown", confidence: 0.1, score: 0, reasons: [], secondary: [] },
+        navigationConfidence: 0.3,
+        implementationConfidence: 0.2,
+        entrypointConfidence: 0.1,
+        graphCoverageConfidence: 0.5,
+        investigationTargets: [
+            {
+                id: "App\\Services\\Foo::bar",
+                type: "method",
+                name: "bar",
+                file: "app/Services/Foo.php",
+                score: 99,
+                reason: "noise",
+            },
+        ],
+        matchedFrontend: [],
+        relatedSymbols: [{ id: "App\\Services\\Foo::bar", file: "app/Services/Foo.php", reason: "noise" }],
+        flowPaths: [{ path: "GET /users → UserController::index", complete: true }],
+        claims: { warnings: [], doNotStartHere: [], fieldStatuses: [], fromTicket: [] },
+    } as unknown as TicketAnalyzerResult;
+
+    const probe = {
+        structuralCandidates: [],
+        infrastructureGaps: [],
+        readinessScore: 0.2,
+        dominantWorkflow: analysis.workflow,
+        truncated: false,
+        fieldStatuses: [],
+        graphCoverage: [{ scope: "php", nodeCount: 1, edgeCount: 1, loaded: true }],
+        autoResolved: { scopes: ["php"] },
+        readinessReasons: [],
+    };
+
+    const briefing = buildTicketBriefing(analysis, probe, { scopes: ["php"] });
+
+    assert.equal(briefing.readFirst.length, 0);
+    assert.equal(briefing.relatedSymbols.length, 0);
+    assert.equal(briefing.flowPaths.length, 0);
+    assert.match(
+        briefing.markdown,
+        /does not contain enough domain-specific terms/
+    );
+    assert.match(
+        briefing.markdown,
+        /could not identify a reliable implementation entrypoint/
+    );
+    assert.ok(!/App\\\\Services\\\\Foo::bar/.test(briefing.markdown));
+}
+
+function testLowInformationBriefingUsesAnalyzerWarnings(): void {
+    const analysis = {
+        query: "write some ticket text on a page",
+        workflow: { type: "unknown", confidence: 0, score: 0, reasons: [], secondary: [] },
+        navigationConfidence: 0,
+        implementationConfidence: 0,
+        entrypointConfidence: 0,
+        graphCoverageConfidence: 0,
+        investigationTargets: [],
+        matchedFrontend: [],
+        relatedSymbols: [],
+        flowPaths: [],
+        lowInformation: true,
+        claims: {
+            warnings: [
+                "No meaningful domain terms were extracted.",
+                "ImpactLens cannot determine a reliable investigation entrypoint.",
+                "Please provide a more specific ticket or rerun with --boost after identifying relevant symbols.",
+            ],
+            doNotStartHere: [],
+            fieldStatuses: [],
+            fromTicket: [],
+        },
+    } as unknown as TicketAnalyzerResult;
+
+    const probe = {
+        structuralCandidates: [],
+        infrastructureGaps: [],
+        readinessScore: 0,
+        dominantWorkflow: analysis.workflow,
+        truncated: false,
+        fieldStatuses: [],
+        graphCoverage: [{ scope: "php", nodeCount: 0, edgeCount: 0, loaded: true }],
+        autoResolved: { scopes: ["php"] },
+        readinessReasons: [],
+    };
+
+    const briefing = buildTicketBriefing(analysis, probe, { scopes: ["php"] });
+
+    assert.equal(briefing.readFirst.length, 0);
+    assert.match(briefing.markdown, /Navigation confidence: 0/);
+    assert.match(briefing.markdown, /Implementation confidence: 0/);
+    assert.ok(
+        briefing.warnings.includes("No meaningful domain terms were extracted.")
+    );
+    assert.ok(
+        !briefing.warnings.some(w =>
+            /Ticket lacks domain-specific terms for a reliable entrypoint/.test(w)
+        ),
+        "should not duplicate low-information warning when analyzer already set lowInformation"
+    );
+}
+
 function testFilterFlowPathsForBriefing(): void {
     const ticket = fs.readFileSync(path.join(projectRoot, "tickets/fe-new.txt"), "utf8");
     const filtered = filterFlowPathsForBriefing([
@@ -167,6 +277,12 @@ function run(): void {
 
     testCollapseReadFirstByFile();
     console.log("  ✓ collapse read first by file");
+
+    testLowSignalBriefingSuppressesRankedFiles();
+    console.log("  ✓ low-signal briefing suppresses ranked files");
+
+    testLowInformationBriefingUsesAnalyzerWarnings();
+    console.log("  ✓ low-information briefing uses analyzer warnings");
 
     testFilterFlowPathsForBriefing();
     console.log("  ✓ filter flow paths for briefing");

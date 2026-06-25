@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
+import { isLowSignalTicketBriefing } from "./ticketBriefing";
 import { inferIntentAnswers, previewTicketIntent } from "./ticketIntent";
 import { startTicketSession, continueTicketSession } from "./ticketSession";
 
@@ -16,6 +17,7 @@ interface VagueBriefingResult {
     navigationConfidence: number;
     implementationConfidence: number;
     inferredWorkflow: string;
+    appliedWorkflow: string;
     markdown: string;
 }
 
@@ -75,6 +77,8 @@ function runVagueBriefing(ticketFile: string): VagueBriefingResult | null {
             navigationConfidence: result.analysis!.navigationConfidence,
             implementationConfidence: result.analysis!.implementationConfidence,
             inferredWorkflow: preview.dominantWorkflow.type,
+            appliedWorkflow:
+                result.session.resolved.lockedWorkflow ?? result.analysis!.workflow.type,
             markdown: result.briefing!.markdown,
         };
     } finally {
@@ -89,12 +93,39 @@ function assertNoAbsurdAnchors(readFirst: Array<{ id: string; file: string | nul
     );
 }
 
+function isLowSignalResult(result: VagueBriefingResult): boolean {
+    return (
+        (result.navigationConfidence === 0 && result.implementationConfidence === 0) ||
+        isLowSignalTicketBriefing(result.appliedWorkflow, result.navigationConfidence)
+    );
+}
+
 function assertTierCTriageSignals(result: VagueBriefingResult, ticketLabel: string): void {
+    if (isLowSignalResult(result)) {
+        assert.equal(
+            result.readFirst.length,
+            0,
+            `${ticketLabel}: low-signal ticket should not return ranked files`
+        );
+        assert.match(
+            result.markdown,
+            /does not contain enough domain-specific terms/,
+            `${ticketLabel}: low-signal ticket should show professional triage message`
+        );
+        assert.match(
+            result.markdown,
+            /could not identify a reliable implementation entrypoint/
+        );
+        return;
+    }
+
     assert.ok(result.readFirst.length > 0, `${ticketLabel}: read first should not be empty`);
     assertNoAbsurdAnchors(result.readFirst);
 
     assert.ok(
-        result.warnings.some(w => /concrete code anchors|triage only|uncertain|unknown|verify/i.test(w)),
+        result.warnings.some(w =>
+            /concrete code anchors|triage only|uncertain|unknown|verify|domain-specific terms/i.test(w)
+        ),
         `${ticketLabel}: vague ticket should warn that ranking is triage-only or uncertain`
     );
 }
@@ -107,14 +138,16 @@ function testHeroNotShowingTriage(): void {
     }
 
     assertTierCTriageSignals(result, "hero-not-showing");
-    assert.ok(
-        readFirstMatches(result.readFirst, /hero/i),
-        "hero ticket should surface hero-related components"
-    );
-    assert.ok(
-        result.flowPaths.some(path => /hero/i.test(path.path)),
-        "hero ticket should include partial hero flow paths"
-    );
+    if (!isLowSignalResult(result)) {
+        assert.ok(
+            readFirstMatches(result.readFirst, /hero/i),
+            "hero ticket should surface hero-related components"
+        );
+        assert.ok(
+            result.flowPaths.some(path => /hero/i.test(path.path)),
+            "hero ticket should include partial hero flow paths"
+        );
+    }
 }
 
 function testRankingNotUpdatingTriage(): void {
@@ -125,20 +158,22 @@ function testRankingNotUpdatingTriage(): void {
     }
 
     assertTierCTriageSignals(result, "ranking-not-updating");
-    assert.ok(
-        readFirstMatches(result.readFirst, /ranking|import/i),
-        "ranking ticket should surface ranking- or import-related candidates"
-    );
+    if (!isLowSignalResult(result)) {
+        assert.ok(
+            readFirstMatches(result.readFirst, /ranking|import/i),
+            "ranking ticket should surface ranking- or import-related candidates"
+        );
 
-    const hasUncertaintySignal =
-        result.inferredWorkflow === "import" ||
-        result.warnings.some(w => /unsure|uncertain|verify/i.test(w)) ||
-        result.implementationConfidence < 0.65;
+        const hasUncertaintySignal =
+            result.inferredWorkflow === "import" ||
+            result.warnings.some(w => /unsure|uncertain|verify/i.test(w)) ||
+            result.implementationConfidence < 0.65;
 
-    assert.ok(
-        hasUncertaintySignal,
-        "ranking ticket should not look like a sharp, high-confidence briefing"
-    );
+        assert.ok(
+            hasUncertaintySignal,
+            "ranking ticket should not look like a sharp, high-confidence briefing"
+        );
+    }
 }
 
 function testPlayerProfileSlowTriage(): void {
@@ -149,20 +184,22 @@ function testPlayerProfileSlowTriage(): void {
     }
 
     assertTierCTriageSignals(result, "player-profile-slow");
-    assert.ok(
-        readFirstMatches(result.readFirst, /profile|player|user/i),
-        "player profile ticket should surface profile/player-related candidates"
-    );
+    if (!isLowSignalResult(result)) {
+        assert.ok(
+            readFirstMatches(result.readFirst, /profile|player|user/i),
+            "player profile ticket should surface profile/player-related candidates"
+        );
 
-    const hasUncertaintySignal =
-        result.inferredWorkflow === "unknown" ||
-        result.warnings.some(w => /unknown|uncertain|verify/i.test(w)) ||
-        result.implementationConfidence < 0.6;
+        const hasUncertaintySignal =
+            result.inferredWorkflow === "unknown" ||
+            result.warnings.some(w => /unknown|uncertain|verify/i.test(w)) ||
+            result.implementationConfidence < 0.6;
 
-    assert.ok(
-        hasUncertaintySignal,
-        "player profile ticket should signal ambiguity (unknown workflow or warning or low impl confidence)"
-    );
+        assert.ok(
+            hasUncertaintySignal,
+            "player profile ticket should signal ambiguity (unknown workflow or warning or low impl confidence)"
+        );
+    }
 }
 
 function testImagesBlurryMobileTriage(): void {
@@ -173,10 +210,12 @@ function testImagesBlurryMobileTriage(): void {
     }
 
     assertTierCTriageSignals(result, "images-blurry-mobile");
-    assert.ok(
-        readFirstMatches(result.readFirst, /mobile|device|image|vue/i),
-        "blurry images ticket should surface some frontend/mobile/image-related candidates"
-    );
+    if (!isLowSignalResult(result)) {
+        assert.ok(
+            readFirstMatches(result.readFirst, /mobile|device|image|vue/i),
+            "blurry images ticket should surface some frontend/mobile/image-related candidates"
+        );
+    }
 }
 
 function testCategoriesMissingImportTriage(): void {
@@ -187,10 +226,12 @@ function testCategoriesMissingImportTriage(): void {
     }
 
     assertTierCTriageSignals(result, "categories-missing-import");
-    assert.ok(
-        readFirstMatches(result.readFirst, /import|category|provider|mapper/i),
-        "categories import ticket should surface import/category-related candidates"
-    );
+    if (!isLowSignalResult(result)) {
+        assert.ok(
+            readFirstMatches(result.readFirst, /import|category|provider|mapper/i),
+            "categories import ticket should surface import/category-related candidates"
+        );
+    }
 }
 
 function testRedsportExportTriage(): void {
@@ -201,15 +242,13 @@ function testRedsportExportTriage(): void {
     }
 
     assert.notEqual(result.inferredWorkflow, "queue", "export/cms ticket should not infer queue workflow");
-    assert.ok(
-        result.warnings.some(w => /triage only|concrete anchors/i.test(w)),
-        "expected vague triage warning"
-    );
-    assert.ok(result.readFirst.length > 0, "read-first should suggest starting points");
-    assert.ok(
-        readFirstMatches(result.readFirst, /contentlist|content.?list|import|sync|cms/i),
-        "read-first should surface cms list or data-sync compass"
-    );
+    assertTierCTriageSignals(result, "redsport-vod-recording-export");
+    if (!isLowSignalResult(result)) {
+        assert.ok(
+            readFirstMatches(result.readFirst, /contentlist|content.?list|import|sync|cms/i),
+            "read-first should surface cms list or data-sync compass"
+        );
+    }
     assert.ok(result.implementationConfidence <= 0.58, "vague ticket should cap implementation confidence");
 }
 

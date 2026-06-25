@@ -489,6 +489,29 @@ function formatFlowPathLines(flowPaths: TicketFlowPath[]): string[] {
     });
 }
 
+export const LOW_SIGNAL_NAVIGATION_CONFIDENCE_THRESHOLD = 0.45;
+
+export function isLowSignalTicketBriefing(
+    workflowType: string,
+    navigationConfidence: number
+): boolean {
+    return workflowType === "unknown" && navigationConfidence < LOW_SIGNAL_NAVIGATION_CONFIDENCE_THRESHOLD;
+}
+
+function formatLowSignalReadFirstLines(): string[] {
+    return [
+        "This ticket does not contain enough domain-specific terms.",
+        "",
+        "ImpactLens could not identify a reliable implementation entrypoint.",
+        "",
+        "Suggestions:",
+        "",
+        "- search the repository for domain terminology",
+        "- classify the affected workflow manually",
+        "- rerun analyze with `--boost` once concrete symbols are known",
+    ];
+}
+
 export function buildTicketBriefing(
     analysis: TicketAnalyzerResult,
     probe: TicketProbeResult,
@@ -496,8 +519,18 @@ export function buildTicketBriefing(
 ): TicketBriefing {
     const structuralIds = new Set(probe.structuralCandidates.map(item => item.id));
     const workflowType = resolved.lockedWorkflow ?? analysis.workflow.type;
+    const lowSignalBriefing =
+        analysis.lowInformation ||
+        isLowSignalTicketBriefing(workflowType, analysis.navigationConfidence);
     const rawFlowPaths = analysis.flowPaths ?? [];
 
+    let readFirst: ReadFirstItem[] = [];
+    let flowPaths: TicketFlowPath[] = [];
+    let relatedSymbols: Array<{ id: string; file: string | null; reason: string }> = [];
+    let skip: Array<{ id: string; reason: string }> = [];
+    const intentOpen = resolved.confirmedTopic === "unsure" || resolved.changeIncludes === "unsure";
+
+    if (!lowSignalBriefing) {
     const prioritizedTargets = [
         ...analysis.investigationTargets.filter(item => structuralIds.has(item.id)),
         ...analysis.investigationTargets.filter(item => !structuralIds.has(item.id)),
@@ -513,7 +546,6 @@ export function buildTicketBriefing(
         }));
 
     const uiSources = [...analysis.investigationTargets, ...analysis.matchedFrontend];
-    const intentOpen = resolved.confirmedTopic === "unsure" || resolved.changeIncludes === "unsure";
     const strongUiMatches = findStrongUiReadFirstCandidates(analysis.query, uiSources, rawFlowPaths, {
         intentOpen,
         workflowType,
@@ -536,7 +568,7 @@ export function buildTicketBriefing(
                   reason: item.reason.split(" | ")[0] ?? item.reason,
               })) ?? [];
     const strongUiIds = new Set(strongUiMatches.map(item => item.id));
-    const readFirst = mergeReadFirstCandidates(
+    readFirst = mergeReadFirstCandidates(
         [...strongUiMatches, ...anchoredReadFirst],
         workflowFiltered,
         5,
@@ -549,7 +581,7 @@ export function buildTicketBriefing(
             anchorSymbols: analysis.anchorContext?.symbols ?? [],
         }
     );
-    const flowPaths = filterFlowPathsForBriefing(rawFlowPaths, {
+    flowPaths = filterFlowPathsForBriefing(rawFlowPaths, {
         ticketText: analysis.query,
         workflowType,
         seedNodeIds: readFirst.map(item => item.id),
@@ -558,12 +590,13 @@ export function buildTicketBriefing(
             ? routeLabelsFromAnchors(analysis.anchorContext.routes)
             : [],
     }, 5);
-    const relatedSymbols = analysis.relatedSymbols.slice(0, 5);
+    relatedSymbols = analysis.relatedSymbols.slice(0, 5);
 
-    const skip = analysis.claims.doNotStartHere.slice(0, 5).map(item => ({
+    skip = analysis.claims.doNotStartHere.slice(0, 5).map(item => ({
         id: item.id,
         reason: item.reason,
     }));
+    }
 
     const verify: string[] = [];
 
@@ -591,6 +624,12 @@ export function buildTicketBriefing(
 
     const warnings = [...analysis.claims.warnings];
 
+    if (lowSignalBriefing && !analysis.lowInformation) {
+        warnings.push(
+            "Ticket lacks domain-specific terms for a reliable entrypoint — no ranked files returned"
+        );
+    }
+
     if (resolved.confirmedTopic === "unsure" || resolved.changeIncludes === "unsure") {
         warnings.push("User left topic or scope open (unsure) — treat ranking as broad guidance, verify in code");
     }
@@ -609,13 +648,14 @@ export function buildTicketBriefing(
     const scopeLabel = resolved.scopes.join(", ");
     const intentLabel = formatIntentLabel(resolved);
 
-    const readFirstLines =
-        readFirst.length === 0
-            ? ["- None"]
-            : readFirst.map((item, index) => {
-                  const file = item.file ? ` (${item.file})` : "";
-                  return `${index + 1}. \`${item.id}\`${file} — ${item.reason}`;
-              });
+    const readFirstLines = lowSignalBriefing
+        ? formatLowSignalReadFirstLines()
+        : readFirst.length === 0
+          ? ["- None"]
+          : readFirst.map((item, index) => {
+                const file = item.file ? ` (${item.file})` : "";
+                return `${index + 1}. \`${item.id}\`${file} — ${item.reason}`;
+            });
 
     const skipLines =
         skip.length === 0

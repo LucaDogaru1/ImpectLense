@@ -1,3 +1,5 @@
+import type { WorkflowType } from "./ticketWorkflow";
+
 const STOP_WORDS = new Set([
     "the", "and", "for", "with", "from", "that", "this", "when", "then", "into", "your",
     "are", "was", "were", "will", "should", "have", "has", "had", "not", "can", "may",
@@ -11,7 +13,7 @@ const STOP_WORDS = new Set([
     "primary", "secondary", "supporting", "intended", "multiple", "lines", "chips",
     "button", "buttons", "area", "render", "rendered", "desktop", "mobile", "column",
     "content", "text", "short", "prominently", "configurable", "configuration",
-    "given", "when", "then", "feature", "scenario", "background", "acceptance",
+    "given", "feature", "scenario", "background", "acceptance",
     "behaviour", "behavior", "story", "criteria", "explicit", "scope", "ops",
     "authorization", "required", "forbidden", "layer", "layers", "merge", "merged",
 ]);
@@ -20,9 +22,88 @@ const GENERIC_TICKET_TOKENS = new Set([
     "ticket", "event", "file", "content", "status", "type", "summary", "position",
     "layout", "display", "enabled", "source", "title", "description", "default",
     "component", "frontend", "collection", "livestream", "action", "change", "check",
-    "data", "days", "api", "usable", "preview", "defines", "nothing", "nothing is",
-    "name", "names", "home", "page", "field", "value", "type", "toggle",
+    "data", "days", "api", "usable", "preview", "defines", "name", "names", "home",
+    "page", "field", "value", "toggle",
 ]);
+
+export const LOW_INFORMATION_WARNINGS = [
+    "No meaningful domain terms were extracted.",
+    "ImpactLens cannot determine a reliable investigation entrypoint.",
+    "Please provide a more specific ticket or rerun with --boost after identifying relevant symbols.",
+] as const;
+
+export interface LowInformationGateInput {
+    ticketText: string;
+    workflowType: WorkflowType;
+    boostTerms?: string[];
+    entities?: string[];
+    fields?: string[];
+    fieldTerms?: string[];
+    sources?: string[];
+    actions?: string[];
+    statuses?: string[];
+    /** Tokens that survived strong-match filtering in the analyzer. */
+    strongMatchedTokens: string[];
+}
+
+export interface TicketDomainAssessment {
+    rejected: boolean;
+    meaningfulTokens: string[];
+}
+
+/** Usable strong tokens for triage: length >= 6 after analyzer noise filtering. */
+export function usableStrongTicketTokens(strongMatchedTokens: string[]): string[] {
+    return strongMatchedTokens.filter(token => token.length >= 6);
+}
+
+export function hasTicketStructuralSignals(input: LowInformationGateInput): boolean {
+    if ((input.boostTerms ?? []).some(term => term.trim().length > 0)) {
+        return true;
+    }
+
+    if (ticketHasConcreteAnchors(input.ticketText)) {
+        return true;
+    }
+
+    const concreteActions = (input.actions ?? []).filter(action => action !== "unknown");
+
+    return (
+        (input.entities ?? []).length > 0 ||
+        (input.fields ?? []).length > 0 ||
+        (input.fieldTerms ?? []).length > 0 ||
+        (input.sources ?? []).length > 0 ||
+        concreteActions.length > 0 ||
+        (input.statuses ?? []).length > 0 ||
+        ticketMentionsHttpRoute(input.ticketText)
+    );
+}
+
+/**
+ * Prefer "I don't know" over ranking on generic English:
+ * unknown workflow + no entities/fields/endpoints/sources/actions + <= 1 usable strong token.
+ */
+export function shouldRejectAsLowInformationTicket(input: LowInformationGateInput): boolean {
+    if (hasTicketStructuralSignals(input)) {
+        return false;
+    }
+
+    if (input.workflowType !== "unknown") {
+        return false;
+    }
+
+    return usableStrongTicketTokens(input.strongMatchedTokens).length <= 1;
+}
+
+export function assessTicketDomainInformation(
+    input: LowInformationGateInput
+): TicketDomainAssessment {
+    const meaningfulTokens = usableStrongTicketTokens(input.strongMatchedTokens);
+
+    return {
+        rejected: shouldRejectAsLowInformationTicket(input),
+        meaningfulTokens,
+    };
+}
 
 export function tokenizeTicketText(input: string): string[] {
     const normalized = input
@@ -115,7 +196,7 @@ const TITLE_LINE_PREFIX = /^(title|description|acceptance criteria|summary|to do
 function ticketMentionsHttpRoute(ticketText: string): boolean {
     return (
         ticketText.match(
-            /\b(GET|POST|PUT|PATCH|DELETE)\s+(?:api\/v\d+\/)?[a-z0-9][a-z0-9./_{}<>\-]*/gi
+            /\b(GET|POST|PUT|PATCH|DELETE)\s+\/?(?:api\/v\d+\/)?[a-z0-9][a-z0-9./_{}<>\-]*/gi
         )?.length ?? 0
     ) > 0;
 }
