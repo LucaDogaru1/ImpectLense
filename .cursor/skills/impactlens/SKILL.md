@@ -102,14 +102,16 @@ Implement only after verifying the relevant code in the repository.
 If the graph is incomplete or misleading, continue with normal investigation — ImpactLens is a navigation aid, not a decision engine.
 
 ---
+## 5. Feedback (mandatory)
 
-## 5. Feedback (optional)
+When you used an ImpactLens command and have enough information to judge its usefulness, append **one JSON line** to `.ai/impactlens/impactlens-feedback.jsonl` if a feedback file already existing write another one in the same folder.
 
-When you ran `analyze:ticket` and can judge usefulness, append one JSON line to `.ai/impactlens/impactlens-feedback.jsonl`. Once per ticket.
+Record feedback **once per task**. Skip feedback if you could not meaningfully evaluate the command.
 
 ```json
 {
   "timestamp": "2026-06-22T12:00:00Z",
+  "command": "analyze:ticket",
   "ticket": "inline",
   "summary": "Hero teaser layout configuration",
   "ticket_topic": "ui",
@@ -117,12 +119,46 @@ When you ran `analyze:ticket` and can judge usefulness, append one JSON line to 
   "scopes": "php,js",
   "helpful": true,
   "reason": "helpful",
-  "readFirst": ["js:apps/.../heroTeaser/index.vue::HeroTeaser"],
-  "actual": ["js:apps/.../heroTeaser/index.vue::HeroTeaser"]
+  "readFirst": [
+    "js:apps/.../heroTeaser/index.vue::HeroTeaser"
+  ],
+  "actual": [
+    "js:apps/.../heroTeaser/index.vue::HeroTeaser"
+  ]
 }
 ```
 
-Failure reasons: `wrong-workflow` · `wrong-files` · `missing-files` · `wrong-flow-path` · `no-useful-results` · `skipped-ticket-analysis`
+### `command`
+
+One of:
+
+* `analyze:ticket`
+* `ai-context`
+* `change-impact`
+* `impact`
+* `architecture`
+* `risk`
+* `hotspots`
+* `cycles`
+* `dead-code`
+
+### `reason`
+
+When `helpful: true`:
+
+* `helpful`
+
+When `helpful: false`:
+
+* `wrong-workflow`
+* `wrong-files`
+* `missing-files`
+* `wrong-flow-path`
+* `no-useful-results`
+* `graph-incomplete`
+
+Record what you actually investigated in `actual`. If the command suggested entrypoints or symbols, record them in `readFirst`.
+
 
 ---
 

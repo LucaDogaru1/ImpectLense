@@ -1,26 +1,26 @@
 # ImpactLens
 
 ⚠️ Before using ImpactLens, read:
-docs/support.md
 
-It explains what PHP, JavaScript, Vue and Nuxt support actually covers,
-known limitations, and the maturity of each scanner.
+`docs/support.md`
+
+It explains what PHP, JavaScript, Vue and Nuxt support actually covers, known limitations, and the maturity of each scanner.
 
 ---
 
-ImpactLens scans a codebase into a queryable graph and maps ticket text
-to relevant code.
+## What is ImpactLens?
 
-Ticket → Graph → Briefing
+ImpactLens builds a queryable code graph that helps developers and AI agents navigate large codebases.
 
-It helps you answer:
+Instead of searching blindly, you can ask questions like:
 
-- Where should I start reading code?
-- Which files are relevant to this ticket?
-- What breaks if I change this?
-- How does a UI action reach backend code?
+* Where is this method used?
+* What calls this endpoint?
+* What breaks if I change this class?
+* Which files depend on this component?
+* How does this UI action reach the backend?
 
-**In summary:** ImpactLens helps developers and AI agents find the right place to start, reducing exploration time and improving navigation in large codebases.
+**ImpactLens doesn't replace reading code—it makes finding the right code much faster.**
 
 ---
 
@@ -30,7 +30,21 @@ It helps you answer:
 npm install impactlens
 ```
 
-On install, the agent skill is written to `.ai/impactlens/skill.md`. Skip with `IMPACTLENS_SKIP_SKILL=1`. Re-run: `npx impactlens install-skill`.
+On install, the agent skill is written to `.ai/impactlens/skill.md`.
+
+Skip with:
+
+```bash
+IMPACTLENS_SKIP_SKILL=1
+```
+
+Reinstall later:
+
+```bash
+npx impactlens install-skill
+```
+
+Available commands:
 
 ```bash
 npx impactlens --commands
@@ -39,52 +53,70 @@ npx impactlens --help
 
 ---
 
-## Quick Start
+# Quick Start
 
-# Scan repository
-impactlens scan /path/to/repo --lang=both
+Build the graph:
 
-# Analyze ticket
+```bash
+impactlens scan /path/to/repository --lang=both
+```
+
+Investigate a symbol:
+
+```bash
+impactlens ai-context sqlite/Graph.sqlite "<symbol>"
+impactlens change-impact sqlite/Graph.sqlite "<symbol>"
+impactlens impact sqlite/Graph.sqlite "<symbol>"
+```
+
+Optionally generate a ticket briefing:
+
+```bash
 impactlens ticket sqlite/Graph.sqlite \
   --ticket=tickets/issue.txt \
   --scopes=php,js
+```
+
+Use ticket analysis only when the ticket already contains enough technical information (API names, endpoints, field names, symbols, routes, etc.). Otherwise, locate the first code symbol yourself and continue with the graph commands.
 
 ---
 
-## What it builds
+# Main Commands
 
-- PHP classes, methods, routes
-- Vue components
-- JS/TS modules
-- Imports and calls
-- HTTP links (frontend → backend when resolvable)
-
----
-
-## Main Commands
-
-| Command | Purpose |
-|----------|----------|
-| scan | Build graph |
-| ticket | Ticket → briefing |
-| ai-context | Analyze one symbol |
-| change-impact | Blast radius |
-| architecture | Layer violations |
-| cycles | Circular dependencies |
+| Command         | Purpose                                       |
+| --------------- | --------------------------------------------- |
+| `scan`          | Build the code graph                          |
+| `ai-context`    | Show callers, callees and surrounding context |
+| `change-impact` | Analyze blast radius                          |
+| `impact`        | Extended dependency analysis                  |
+| `ticket`        | Optional ticket → graph briefing              |
+| `architecture`  | Layer validation                              |
+| `cycles`        | Detect dependency cycles                      |
 
 ---
 
-## Documentation
+# What the graph contains
 
-- docs/support.md ← Read first
-- docs/quickstart.md
-- docs/config-setup.md
-- docs/commands.md
-- docs/graph-model.md
-- assets/agent-skill/SKILL.md — agent playbook (→ `.ai/impactlens/skill.md` on install)
+* PHP classes and methods
+* JavaScript / TypeScript modules
+* Vue components
+* Routes and endpoints
+* Imports and function calls
+* Frontend → backend HTTP relationships (when detectable)
 
 ---
 
-## License
+# Documentation
+
+* `docs/support.md` ← Read first
+* `docs/quickstart.md`
+* `docs/config-setup.md`
+* `docs/commands.md`
+* `docs/graph-model.md`
+* `assets/agent-skill/SKILL.md`
+
+---
+
+# License
 
 ISC
