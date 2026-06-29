@@ -17,6 +17,21 @@ export function assignmentExpression(
 
     recordModelPropertyArrayShape(left, right, context, file);
 
+    const leftKey = normalizeAssignedTarget(left.text);
+
+    if (leftKey.startsWith("this.") && right.type === "variable_name") {
+        const sourceType =
+            context.variableTypes.get(right.text) ??
+            context.variableTypes.get(right.text.replace(/^\$/, ""));
+
+        if (sourceType) {
+            context.variableTypes.set(leftKey, sourceType);
+            context.classPropertyTypes.set(leftKey, sourceType);
+        }
+
+        return;
+    }
+
     if (right.type !== "object_creation_expression") return;
 
     const className =
@@ -28,8 +43,6 @@ export function assignmentExpression(
     const resolvedClassName = resolveClassName(className, context);
 
     if (!resolvedClassName) return;
-
-    const leftKey = normalizeAssignedTarget(left.text);
 
     context.variableTypes.set(leftKey, resolvedClassName);
 

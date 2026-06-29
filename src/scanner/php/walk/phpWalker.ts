@@ -22,6 +22,7 @@ import {returnStatementType} from "../astHandlers/node_types/returnStatement";
 import {persistArrayElementType} from "../astHandlers/node_types/persistArrayElement";
 import {configLiteralType} from "../astHandlers/node_types/configLiteral";
 import {functionCallExpressionType} from "../astHandlers/node_types/functionCallExpression";
+import {classPropertyTypesForClass} from "./classPropertyTypesRegistry";
 
 export default function walk(rootNode: Parser.SyntaxNode, file:string, context: WalkContext):void {
     for(const child of rootNode.children) {
@@ -36,16 +37,18 @@ export default function walk(rootNode: Parser.SyntaxNode, file:string, context: 
                 context.imports.set(useImport.alias, useImport.fullName);
                 childContext = context;
                 break;
-            case 'class_declaration':
+            case 'class_declaration': {
+                const currentClass = classType(child, file, context);
                 childContext = {
                     ...context,
-                    currentClass: classType(child, file, context),
+                    currentClass,
                     currentInterface: undefined,
-                    classPropertyTypes: new Map<string, string>(),
-                }
+                    classPropertyTypes: classPropertyTypesForClass(child, context, currentClass),
+                };
                 resolveExtends(child, childContext);
                 resolveImplements(child, childContext);
                 break;
+            }
             case "interface_declaration" :
                 childContext = {
                     ...context,

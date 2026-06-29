@@ -9,9 +9,35 @@ import {
     extractRoutesFromRouteFile,
     isRouteFile,
 } from "../routes/routeFileExtractor";
+import {
+    classPropertyTypesRegistry,
+    propagateClassPropertyTypes,
+} from "../walk/classPropertyTypesRegistry";
+
+function walkPhpFile(parser: Parser, file: ScannedPhpFile): void {
+    const tree = parsePhpFile(parser, file.absolutePath);
+
+    if (tree.rootNode.hasError) {
+        console.error(`Error parsing file: ${file.absolutePath}`);
+        return;
+    }
+
+    const context: WalkContext = {
+        classPropertyTypes: new Map(),
+        variableTypes: new Map(),
+        imports: new Map(),
+        extractedFields: [],
+        dataFlows: new Map(),
+    };
+
+    walk(tree.rootNode, file.relativePath, context);
+}
 
 export function processPhpFiles(files: ScannedPhpFile[], parser: Parser) {
     let extractedRouteCount = 0;
+    const phpFiles: ScannedPhpFile[] = [];
+
+    classPropertyTypesRegistry.clear();
 
     for (const file of files) {
         if (isRouteFile(file.relativePath)) {
@@ -27,22 +53,23 @@ export function processPhpFiles(files: ScannedPhpFile[], parser: Parser) {
             continue;
         }
 
+        phpFiles.push(file);
+    }
+
+    for (const file of phpFiles) {
         try {
-            const tree = parsePhpFile(parser, file.absolutePath);
+            walkPhpFile(parser, file);
+        } catch (error) {
+            console.error(`Parser crashed on file: ${file.absolutePath}`);
+            console.error(error);
+        }
+    }
 
-            if (tree.rootNode.hasError) {
-                console.error(`Error parsing file: ${file.absolutePath}`);
-                continue;
-            }
+    propagateClassPropertyTypes();
 
-            const context: WalkContext = {
-                classPropertyTypes: new Map(),
-                variableTypes: new Map(),
-                imports: new Map(),
-                extractedFields: [],
-                dataFlows : new Map()
-            }
-            walk(tree.rootNode, file.relativePath, context);
+    for (const file of phpFiles) {
+        try {
+            walkPhpFile(parser, file);
         } catch (error) {
             console.error(`Parser crashed on file: ${file.absolutePath}`);
             console.error(error);
