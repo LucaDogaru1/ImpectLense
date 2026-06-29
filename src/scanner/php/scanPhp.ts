@@ -19,7 +19,7 @@ export function scanPhpFiles(rootDir:string, FOLDERS_TO_IGNORE: string[], curren
             continue
         }
 
-        if (!entry.isFile() || !entry.name.endsWith('.php')) continue;
+        if (!entry.isFile() || !entry.name.endsWith(".php")) continue;
 
         const relativePath = path.relative(rootDir, fullPath).split(path.sep).join("/");
         result.push({ absolutePath: fullPath, relativePath });

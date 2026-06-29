@@ -13,6 +13,8 @@ import {
     classPropertyTypesRegistry,
     propagateClassPropertyTypes,
 } from "../walk/classPropertyTypesRegistry";
+import { isBladeFile } from "../blade/bladeScanner";
+import { parseBladeFile } from "../blade/parseBladeFile";
 
 function walkPhpFile(parser: Parser, file: ScannedPhpFile): void {
     const tree = parsePhpFile(parser, file.absolutePath);
@@ -35,11 +37,23 @@ function walkPhpFile(parser: Parser, file: ScannedPhpFile): void {
 
 export function processPhpFiles(files: ScannedPhpFile[], parser: Parser) {
     let extractedRouteCount = 0;
+    let bladeFileCount = 0;
     const phpFiles: ScannedPhpFile[] = [];
 
     classPropertyTypesRegistry.clear();
 
     for (const file of files) {
+        if (isBladeFile(file.relativePath)) {
+            try {
+                parseBladeFile(file.absolutePath, file.relativePath);
+                bladeFileCount += 1;
+            } catch (error) {
+                console.error(`Blade scan failed: ${file.absolutePath}`);
+                console.error(error);
+            }
+            continue;
+        }
+
         if (isRouteFile(file.relativePath)) {
             try {
                 extractedRouteCount += extractRoutesFromRouteFile(
@@ -78,6 +92,10 @@ export function processPhpFiles(files: ScannedPhpFile[], parser: Parser) {
 
     if (extractedRouteCount > 0) {
         console.log(`Extracted ${extractedRouteCount} Laravel routes from route files`);
+    }
+
+    if (bladeFileCount > 0) {
+        console.log(`Scanned ${bladeFileCount} Blade views`);
     }
 
     resolveInterfaceCalls();

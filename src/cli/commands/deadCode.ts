@@ -12,6 +12,7 @@ const options: DeadCodeOptions = {
     debugMethodId: getOptionValue(args, "--debug"),
     includeInterfaceResolved: hasFlag(args, "--include-interface-resolved"),
     includeRoutes: !hasFlag(args, "--no-include-routes"),
+    includeBladeReferences: !hasFlag(args, "--no-include-blade-references"),
     ignoreConstructors: !hasFlag(args, "--no-ignore-constructors"),
     ignoreControllerActions: !hasFlag(args, "--no-ignore-controller-actions"),
     ignoreMagicMethods: !hasFlag(args, "--no-ignore-magic-methods"),
@@ -72,6 +73,7 @@ try {
     log(`   include depends_on: ${chalk.white(String(includeDependsOn))}`);
     log(`   include interface resolved: ${chalk.white(String(options.includeInterfaceResolved))}`);
     log(`   include routes: ${chalk.white(String(options.includeRoutes))}`);
+    log(`   include blade refs: ${chalk.white(String(options.includeBladeReferences))}`);
     log(`   showing top: ${chalk.white(limit)}`);
     log();
 
@@ -100,6 +102,7 @@ try {
             }
             log(`     ${chalk.gray("incoming calls:")} ${chalk.white(item.incomingCalls)}`);
             log(`     ${chalk.gray("incoming routes:")} ${chalk.white(item.incomingRoutes)}`);
+            log(`     ${chalk.gray("incoming blade refs:")} ${chalk.white(item.incomingBladeRefs)}`);
             log(`     ${chalk.gray("category:")} ${chalk.white(item.category)}  ${chalk.gray("risk:")} ${chalk.white(item.risk)}`);
             log();
         });
@@ -124,6 +127,7 @@ try {
 
             log(`   ${chalk.gray("direct incoming calls:")} ${chalk.white(result.debug.directIncomingCalls)}`);
             log(`   ${chalk.gray("incoming routes:")} ${chalk.white(result.debug.incomingRoutes)}`);
+            log(`   ${chalk.gray("incoming blade refs:")} ${chalk.white(result.debug.incomingBladeRefs)}`);
             log(`   ${chalk.gray("resolved incoming:")} ${chalk.white(result.debug.resolvedIncomingCalls)}`);
             log(`   ${chalk.gray("effective incoming:")} ${chalk.white(result.debug.effectiveIncomingCalls)}`);
             log(`   ${chalk.gray("considered dead:")} ${chalk.white(String(result.debug.consideredDead))}`);

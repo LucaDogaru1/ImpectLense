@@ -7,6 +7,7 @@ export interface DeadCodeItem {
     visibility: string | null;
     incomingCalls: number;
     incomingRoutes: number;
+    incomingBladeRefs: number;
     category: "dead_candidate" | "unrouted_controller_action";
     risk: "low" | "medium" | "high";
 }
@@ -21,6 +22,7 @@ export interface DeadCodeResult {
         skippedReason?: string;
         directIncomingCalls: number;
         incomingRoutes: number;
+        incomingBladeRefs: number;
         resolvedIncomingCalls: number;
         effectiveIncomingCalls: number;
         consideredDead: boolean;
@@ -30,6 +32,7 @@ export interface DeadCodeResult {
 export interface DeadCodeOptions {
     includeInterfaceResolved?: boolean;
     includeRoutes?: boolean;
+    includeBladeReferences?: boolean;
     ignoreConstructors?: boolean;
     ignoreControllerActions?: boolean;
     ignoreMagicMethods?: boolean;
@@ -121,6 +124,7 @@ function isLikelyBaseClass(parentId: string, filePath: string): boolean {
 export function findDeadCode(db: SQLiteDatabase, options?: DeadCodeOptions): DeadCodeResult {
     const includeInterfaceResolved = options?.includeInterfaceResolved ?? false;
     const includeRoutes = options?.includeRoutes ?? true;
+    const includeBladeReferences = options?.includeBladeReferences ?? true;
     const ignoreConstructors = options?.ignoreConstructors ?? true;
     const ignoreControllerActions = options?.ignoreControllerActions ?? true;
     const ignoreMagicMethods = options?.ignoreMagicMethods ?? true;
@@ -169,6 +173,17 @@ export function findDeadCode(db: SQLiteDatabase, options?: DeadCodeOptions): Dea
         )
         : new Map<string, number>();
 
+    const incomingBladeRefsByMethod = includeBladeReferences
+        ? buildCountMap(
+            db.prepare(`
+                SELECT to_id, COUNT(*) AS count
+                FROM edges
+                WHERE type IN ('BLADE_USES_ACTION', 'BLADE_REFERENCES_SYMBOL')
+                GROUP BY to_id
+            `).all() as Array<{ to_id: string; count: number }>
+        )
+        : new Map<string, number>();
+
     const resolvedIncomingByMethod = includeInterfaceResolved
         ? buildCountMap(
             db.prepare(`
@@ -192,9 +207,10 @@ export function findDeadCode(db: SQLiteDatabase, options?: DeadCodeOptions): Dea
 
         const directIncomingCalls = directIncomingByMethod.get(method.id) ?? 0;
         const incomingRoutes = incomingRoutesByMethod.get(method.id) ?? 0;
+        const incomingBladeRefs = incomingBladeRefsByMethod.get(method.id) ?? 0;
         const resolvedIncomingCalls = resolvedIncomingByMethod.get(method.id) ?? 0;
         const effectiveIncomingCalls =
-            directIncomingCalls + incomingRoutes + resolvedIncomingCalls;
+            directIncomingCalls + incomingRoutes + incomingBladeRefs + resolvedIncomingCalls;
 
         const setSkippedDebug = (skippedReason: string): void => {
             if (!isDebugTarget) {
@@ -207,6 +223,7 @@ export function findDeadCode(db: SQLiteDatabase, options?: DeadCodeOptions): Dea
                 skippedReason,
                 directIncomingCalls,
                 incomingRoutes,
+                incomingBladeRefs,
                 resolvedIncomingCalls,
                 effectiveIncomingCalls,
                 consideredDead: false,
@@ -285,6 +302,7 @@ export function findDeadCode(db: SQLiteDatabase, options?: DeadCodeOptions): Dea
                 found: true,
                 directIncomingCalls,
                 incomingRoutes,
+                incomingBladeRefs,
                 resolvedIncomingCalls,
                 effectiveIncomingCalls,
                 consideredDead: effectiveIncomingCalls === 0,
@@ -299,6 +317,7 @@ export function findDeadCode(db: SQLiteDatabase, options?: DeadCodeOptions): Dea
                 visibility: method.visibility,
                 incomingCalls: directIncomingCalls,
                 incomingRoutes,
+                incomingBladeRefs,
                 category: isLikelyController ? "unrouted_controller_action" : "dead_candidate",
                 risk: isLikelyController ? "medium" : "high",
             });
@@ -315,6 +334,7 @@ export function findDeadCode(db: SQLiteDatabase, options?: DeadCodeOptions): Dea
                 found: false,
                 directIncomingCalls: 0,
                 incomingRoutes: 0,
+                incomingBladeRefs: 0,
                 resolvedIncomingCalls: 0,
                 effectiveIncomingCalls: 0,
                 consideredDead: false,
