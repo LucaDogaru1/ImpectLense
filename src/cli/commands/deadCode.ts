@@ -1,28 +1,36 @@
 import Database from "better-sqlite3";
 import chalk from "chalk";
 import fs from "node:fs";
-import { findDeadCode } from "../../analyzers/deadCode/DeadCodeAnalyzer";
+import { findDeadCode, type DeadCodeOptions } from "../../analyzers/deadCode/DeadCodeAnalyzer";
 import { createReportLogger } from "../../shared/reporting/reportLogger";
 import { getIntOption, getOptionValue, hasFlag } from "../shared/cliArgs";
 
 const dbPath = process.argv[2];
 const args = process.argv.slice(3);
-const debugMethodId = getOptionValue(args, "--debug");
+
+const options: DeadCodeOptions = {
+    debugMethodId: getOptionValue(args, "--debug"),
+    includeInterfaceResolved: hasFlag(args, "--include-interface-resolved"),
+    includeRoutes: !hasFlag(args, "--no-include-routes"),
+    ignoreConstructors: !hasFlag(args, "--no-ignore-constructors"),
+    ignoreControllerActions: !hasFlag(args, "--no-ignore-controller-actions"),
+    ignoreMagicMethods: !hasFlag(args, "--no-ignore-magic-methods"),
+    ignoreTests: !hasFlag(args, "--no-ignore-tests"),
+    ignoreInterfaceMethods: !hasFlag(args, "--no-ignore-interface-methods"),
+    ignoreFrameworkMethods: !hasFlag(args, "--no-ignore-framework-methods"),
+    ignoreAccessors: !hasFlag(args, "--no-ignore-accessors"),
+    ignoreBaseClasses: !hasFlag(args, "--no-ignore-base-classes"),
+};
+
+
 const includeDependsOn = hasFlag(args, "--include-depends-on");
-const includeInterfaceResolved = hasFlag(args, "--include-interface-resolved");
 const jsonOutput = hasFlag(args, "--json");
 const failOnDeadCode = hasFlag(args, "--fail-on-dead-code");
 const limit = getIntOption(args, "--limit", 20, 1);
 const outputPath = getOptionValue(args, "--output");
 
-const ignoreConstructors = !hasFlag(args, "--no-ignore-constructors");
-const ignoreControllerActions = !hasFlag(args, "--no-ignore-controller-actions");
-const ignoreMagicMethods = !hasFlag(args, "--no-ignore-magic-methods");
-const ignoreTests = !hasFlag(args, "--no-ignore-tests");
-const ignoreInterfaceMethods = !hasFlag(args, "--no-ignore-interface-methods");
-
 if (!dbPath) {
-    console.log(chalk.red('Usage: npx tsx src/cli/commands/deadCode.ts Graph.sqlite [--limit=20] [--json] [--include-depends-on] [--include-interface-resolved] [--fail-on-dead-code] [--debug="Class::method"] [--no-ignore-constructors] [--no-ignore-controller-actions] [--no-ignore-magic-methods] [--no-ignore-tests] [--no-ignore-interface-methods] [--output=report.txt]'));
+    console.log(chalk.red('Usage: npx tsx src/cli/commands/deadCode.ts Graph.sqlite [--limit=20] [--json] [--include-depends-on] [--include-interface-resolved] [--no-include-routes] [--no-ignore-base-classes] [--fail-on-dead-code] [--debug="Class::method"] [--no-ignore-framework-methods] [--no-ignore-accessors] [--no-ignore-constructors] [--no-ignore-controller-actions] [--no-ignore-magic-methods] [--no-ignore-tests] [--no-ignore-interface-methods] [--output=report.txt]'));
     process.exit(2);
 }
 
@@ -30,26 +38,13 @@ const db = new Database(dbPath);
 const { log, toText } = createReportLogger();
 
 try {
-    const result = findDeadCode(db, {
-        debugMethodId,
-        includeInterfaceResolved,
-        ignoreConstructors,
-        ignoreControllerActions,
-        ignoreMagicMethods,
-        ignoreTests,
-        ignoreInterfaceMethods,
-    });
+    const result = findDeadCode(db, options);
 
     if (jsonOutput) {
         const payload = {
             ...result,
             includeDependsOn,
-            includeInterfaceResolved,
-            ignoreConstructors,
-            ignoreControllerActions,
-            ignoreMagicMethods,
-            ignoreTests,
-            ignoreInterfaceMethods,
+            ...options,
             failOnDeadCode,
             limit,
             shownItems: result.items.slice(0, limit),
@@ -75,17 +70,21 @@ try {
     log(`   scanned public methods: ${chalk.white(result.scannedMethods)}`);
     log(`   unused public methods: ${chalk.white(result.deadMethods)}`);
     log(`   include depends_on: ${chalk.white(String(includeDependsOn))}`);
-    log(`   include interface resolved: ${chalk.white(String(includeInterfaceResolved))}`);
+    log(`   include interface resolved: ${chalk.white(String(options.includeInterfaceResolved))}`);
+    log(`   include routes: ${chalk.white(String(options.includeRoutes))}`);
     log(`   showing top: ${chalk.white(limit)}`);
     log();
 
     log(chalk.blue.bold("Ignore rules"));
     log(chalk.blue("────────────────────────────────────────────────────"));
-    log(`   constructors: ${chalk.white(String(ignoreConstructors))}`);
-    log(`   controller actions: ${chalk.white(String(ignoreControllerActions))}`);
-    log(`   magic methods: ${chalk.white(String(ignoreMagicMethods))}`);
-    log(`   tests: ${chalk.white(String(ignoreTests))}`);
-    log(`   interface methods: ${chalk.white(String(ignoreInterfaceMethods))}`);
+    log(`   constructors: ${chalk.white(String(options.ignoreConstructors))}`);
+    log(`   controller actions: ${chalk.white(String(options.ignoreControllerActions))}`);
+    log(`   magic methods: ${chalk.white(String(options.ignoreMagicMethods))}`);
+    log(`   tests: ${chalk.white(String(options.ignoreTests))}`);
+    log(`   interface methods: ${chalk.white(String(options.ignoreInterfaceMethods))}`);
+    log(`   framework methods: ${chalk.white(String(options.ignoreFrameworkMethods))}`);
+    log(`   entity accessors: ${chalk.white(String(options.ignoreAccessors))}`);
+    log(`   base classes: ${chalk.white(String(options.ignoreBaseClasses))}`);
     log();
 
     if (result.items.length === 0) {
@@ -100,6 +99,8 @@ try {
                 log(`     ${chalk.gray("location:")} ${chalk.gray(item.file)}`);
             }
             log(`     ${chalk.gray("incoming calls:")} ${chalk.white(item.incomingCalls)}`);
+            log(`     ${chalk.gray("incoming routes:")} ${chalk.white(item.incomingRoutes)}`);
+            log(`     ${chalk.gray("category:")} ${chalk.white(item.category)}  ${chalk.gray("risk:")} ${chalk.white(item.risk)}`);
             log();
         });
 
@@ -108,12 +109,12 @@ try {
         }
     }
 
-    if (debugMethodId) {
+    if (options.debugMethodId) {
         log(chalk.magenta.bold("Debug"));
         log(chalk.magenta("────────────────────────────────────────────────────"));
 
         if (!result.debug || !result.debug.found) {
-            log(chalk.gray(`   Method not found: ${debugMethodId}`));
+            log(chalk.gray(`   Method not found: ${options.debugMethodId}`));
         } else {
             log(`   ${chalk.gray("method:")} ${chalk.white(result.debug.methodId)}`);
 
@@ -121,11 +122,9 @@ try {
                 log(`   ${chalk.gray("skipped reason:")} ${chalk.white(result.debug.skippedReason)}`);
             }
 
-            log(`   ${chalk.gray("direct incoming:")} ${chalk.white(result.debug.directIncomingCalls)}`);
+            log(`   ${chalk.gray("direct incoming calls:")} ${chalk.white(result.debug.directIncomingCalls)}`);
+            log(`   ${chalk.gray("incoming routes:")} ${chalk.white(result.debug.incomingRoutes)}`);
             log(`   ${chalk.gray("resolved incoming:")} ${chalk.white(result.debug.resolvedIncomingCalls)}`);
-            log(`   ${chalk.gray("interface incoming:")} ${chalk.white(result.debug.interfaceIncomingCalls)}`);
-            log(`   ${chalk.gray("inheritance incoming:")} ${chalk.white(result.debug.inheritanceIncomingCalls)}`);
-            log(`   ${chalk.gray("inheritance dispatch incoming:")} ${chalk.white(result.debug.inheritanceDispatchIncomingCalls)}`);
             log(`   ${chalk.gray("effective incoming:")} ${chalk.white(result.debug.effectiveIncomingCalls)}`);
             log(`   ${chalk.gray("considered dead:")} ${chalk.white(String(result.debug.consideredDead))}`);
         }
@@ -146,4 +145,3 @@ try {
 } finally {
     db.close();
 }
-

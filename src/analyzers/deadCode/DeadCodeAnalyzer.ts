@@ -6,48 +6,132 @@ export interface DeadCodeItem {
     file: string | null;
     visibility: string | null;
     incomingCalls: number;
+    incomingRoutes: number;
+    category: "dead_candidate" | "unrouted_controller_action";
+    risk: "low" | "medium" | "high";
 }
 
 export interface DeadCodeResult {
     scannedMethods: number;
     deadMethods: number;
     items: DeadCodeItem[];
-    debug?: DeadCodeDebugInfo;
+    debug?: {
+        methodId: string;
+        found: boolean;
+        skippedReason?: string;
+        directIncomingCalls: number;
+        incomingRoutes: number;
+        resolvedIncomingCalls: number;
+        effectiveIncomingCalls: number;
+        consideredDead: boolean;
+    };
 }
 
-export interface DeadCodeDebugInfo {
-    methodId: string;
-    found: boolean;
-    skippedReason?: string;
-    directIncomingCalls: number;
-    resolvedIncomingCalls: number;
-    interfaceIncomingCalls: number;
-    inheritanceIncomingCalls: number;
-    inheritanceDispatchIncomingCalls: number;
-    effectiveIncomingCalls: number;
-    consideredDead: boolean;
-}
-
-interface DeadCodeOptions {
-    debugMethodId?: string;
+export interface DeadCodeOptions {
     includeInterfaceResolved?: boolean;
+    includeRoutes?: boolean;
     ignoreConstructors?: boolean;
     ignoreControllerActions?: boolean;
     ignoreMagicMethods?: boolean;
     ignoreTests?: boolean;
     ignoreInterfaceMethods?: boolean;
+    ignoreFrameworkMethods?: boolean;
+    ignoreAccessors?: boolean;
+    debugMethodId?: string;
+    ignoreBaseClasses?: boolean;
 }
 
 type SQLiteDatabase = InstanceType<typeof Database>;
 
+function buildCountMap(rows: Array<{ to_id: string; count: number }>): Map<string, number> {
+    const map = new Map<string, number>();
+
+    for (const row of rows) {
+        map.set(row.to_id, Number(row.count));
+    }
+
+    return map;
+}
+
+function isFrameworkMethod(parentId: string, filePath: string, methodName: string): boolean {
+    const lowerFilePath = filePath.toLowerCase();
+    const lowerMethodName = methodName.toLowerCase();
+
+    if (
+        (parentId.endsWith("Request") || lowerFilePath.includes("/requests/")) &&
+        ["rules", "messages", "attributes", "authorize"].includes(lowerMethodName)
+    ) {
+        return true;
+    }
+
+    if (parentId.endsWith("ServiceProvider") && ["boot", "register"].includes(lowerMethodName)) {
+        return true;
+    }
+
+    if (
+        (parentId.endsWith("Command") ||
+            parentId.endsWith("Job") ||
+            parentId.endsWith("Listener") ||
+            parentId.endsWith("Middleware") ||
+            lowerFilePath.includes("/commands/") ||
+            lowerFilePath.includes("/jobs/") ||
+            lowerFilePath.includes("/listeners/") ||
+            lowerFilePath.includes("/middleware/")) &&
+        lowerMethodName === "handle"
+    ) {
+        return true;
+    }
+
+    return false;
+}
+
+function isAccessor(methodName: string): boolean {
+    return /^(get|set|is|has)[A-Z]/.test(methodName);
+}
+
+function isEntityLikeFile(filePath: string): boolean {
+    const lowerFilePath = filePath.toLowerCase();
+
+    return (
+        lowerFilePath.includes("/entity/") ||
+        lowerFilePath.includes("/entities/") ||
+        lowerFilePath.includes("/dto/") ||
+        lowerFilePath.includes("/dtos/") ||
+        lowerFilePath.includes("/model/") ||
+        lowerFilePath.includes("/models/")
+    );
+}
+
+function isLikelyBaseClass(parentId: string, filePath: string): boolean {
+    const shortName = parentId.split("\\").pop() ?? parentId;
+
+    if (/^(Base|Abstract)[A-Za-z0-9_]/.test(shortName) || /Base$/.test(shortName)) {
+        return true;
+    }
+
+    const lowerFilePath = filePath.toLowerCase();
+
+    return (
+        lowerFilePath.includes("/base/") ||
+        lowerFilePath.includes("/abstract/") ||
+        /\/base[a-z0-9_]*\.php$/i.test(lowerFilePath)
+    );
+}
+
 export function findDeadCode(db: SQLiteDatabase, options?: DeadCodeOptions): DeadCodeResult {
-    const debugMethodId = options?.debugMethodId;
     const includeInterfaceResolved = options?.includeInterfaceResolved ?? false;
+    const includeRoutes = options?.includeRoutes ?? true;
     const ignoreConstructors = options?.ignoreConstructors ?? true;
     const ignoreControllerActions = options?.ignoreControllerActions ?? true;
     const ignoreMagicMethods = options?.ignoreMagicMethods ?? true;
     const ignoreTests = options?.ignoreTests ?? true;
     const ignoreInterfaceMethods = options?.ignoreInterfaceMethods ?? true;
+    const ignoreFrameworkMethods = options?.ignoreFrameworkMethods ?? true;
+    const ignoreAccessors = options?.ignoreAccessors ?? false;
+    const debugMethodId = options?.debugMethodId;
+    const ignoreBaseClasses = options?.ignoreBaseClasses ?? true;
+
+    let debug: DeadCodeResult["debug"] = undefined;
 
     const methods = db.prepare(`
         SELECT m.id, m.parent, m.name, m.file, m.visibility, p.type AS parent_type
@@ -65,153 +149,95 @@ export function findDeadCode(db: SQLiteDatabase, options?: DeadCodeOptions): Dea
         parent_type: string | null;
     }>;
 
-    const countIncomingCalls = db.prepare(`
-        SELECT COUNT(*) AS count
-        FROM edges
-        WHERE type = 'CALLS'
-          AND to_id = ?
-    `);
+    const directIncomingByMethod = buildCountMap(
+        db.prepare(`
+            SELECT to_id, COUNT(*) AS count
+            FROM edges
+            WHERE type = 'CALLS'
+            GROUP BY to_id
+        `).all() as Array<{ to_id: string; count: number }>
+    );
 
-    const countResolvedIncomingCalls = db.prepare(`
-        SELECT COUNT(*) AS count
-        FROM edges
-        WHERE type = 'CALLS'
-          AND call_type = 'INTERFACE_RESOLVED'
-          AND to_id = ?
-    `);
-
-    const countInterfaceMethodIncomingCalls = db.prepare(`
-        SELECT COUNT(*) AS count
-        FROM edges calls
-        JOIN edges impl
-          ON impl.type = 'IMPLEMENTS'
-         AND impl.from_id = ?
-        WHERE calls.type = 'CALLS'
-          AND calls.to_id = impl.to_id || '::' || ?
-    `);
-
-    const countInheritanceFamilyIncomingCalls = db.prepare(`
-        WITH RECURSIVE family(id) AS (
-            SELECT ?
-            UNION
-            SELECT e.to_id
-            FROM edges e
-            JOIN family f ON e.type = 'EXTENDS' AND e.from_id = f.id
-            UNION
-            SELECT e.from_id
-            FROM edges e
-            JOIN family f ON e.type = 'EXTENDS' AND e.to_id = f.id
+    const incomingRoutesByMethod = includeRoutes
+        ? buildCountMap(
+            db.prepare(`
+                SELECT to_id, COUNT(*) AS count
+                FROM edges
+                WHERE type = 'ROUTES_TO'
+                GROUP BY to_id
+            `).all() as Array<{ to_id: string; count: number }>
         )
-        SELECT COUNT(*) AS count
-        FROM family f
-        JOIN edges calls
-          ON calls.type = 'CALLS'
-         AND calls.to_id = f.id || '::' || ?
-    `);
+        : new Map<string, number>();
 
-    const countInheritanceDispatchIncomingCalls = db.prepare(`
-        WITH RECURSIVE family(id) AS (
-            SELECT ?
-            UNION
-            SELECT e.to_id
-            FROM edges e
-            JOIN family f ON e.type = 'EXTENDS' AND e.from_id = f.id
-            UNION
-            SELECT e.from_id
-            FROM edges e
-            JOIN family f ON e.type = 'EXTENDS' AND e.to_id = f.id
+    const resolvedIncomingByMethod = includeInterfaceResolved
+        ? buildCountMap(
+            db.prepare(`
+                SELECT to_id, COUNT(*) AS count
+                FROM edges
+                WHERE type = 'CALLS'
+                  AND call_type = 'INTERFACE_RESOLVED'
+                GROUP BY to_id
+            `).all() as Array<{ to_id: string; count: number }>
         )
-        SELECT COUNT(DISTINCT calls.id) AS count
-        FROM edges calls
-        WHERE calls.type = 'CALLS'
-          AND calls.to_id LIKE '%::' || ?
-          AND substr(calls.to_id, 1, instr(calls.to_id, '::') - 1) IN (SELECT id FROM family)
-    `);
+        : new Map<string, number>();
 
     const items: DeadCodeItem[] = [];
-    let debug: DeadCodeDebugInfo | undefined;
 
     for (const method of methods) {
-        const isDebugTarget = debugMethodId !== undefined && method.id === debugMethodId;
-
+        const parentId = method.parent ?? "";
+        const isDebugTarget = debugMethodId === method.id;
+        const filePath = method.file ?? "";
+        const lowerFilePath = filePath.toLowerCase();
         const lowerMethodName = method.name.toLowerCase();
 
-        if (ignoreConstructors && method.name === "__construct") {
-            if (isDebugTarget) {
-                debug = {
-                    methodId: method.id,
-                    found: true,
-                    skippedReason: "constructor",
-                    directIncomingCalls: 0,
-                    resolvedIncomingCalls: 0,
-                    interfaceIncomingCalls: 0,
-                    inheritanceIncomingCalls: 0,
-                    inheritanceDispatchIncomingCalls: 0,
-                    effectiveIncomingCalls: 0,
-                    consideredDead: false,
-                };
+        const directIncomingCalls = directIncomingByMethod.get(method.id) ?? 0;
+        const incomingRoutes = incomingRoutesByMethod.get(method.id) ?? 0;
+        const resolvedIncomingCalls = resolvedIncomingByMethod.get(method.id) ?? 0;
+        const effectiveIncomingCalls =
+            directIncomingCalls + incomingRoutes + resolvedIncomingCalls;
+
+        const setSkippedDebug = (skippedReason: string): void => {
+            if (!isDebugTarget) {
+                return;
             }
+
+            debug = {
+                methodId: method.id,
+                found: true,
+                skippedReason,
+                directIncomingCalls,
+                incomingRoutes,
+                resolvedIncomingCalls,
+                effectiveIncomingCalls,
+                consideredDead: false,
+            };
+        };
+
+        if (ignoreConstructors && method.name === "__construct") {
+            setSkippedDebug("constructor");
+            continue;
+        }
+
+        if (ignoreBaseClasses && isLikelyBaseClass(parentId, filePath)) {
+            setSkippedDebug("base_class");
             continue;
         }
 
         if (ignoreMagicMethods && lowerMethodName.startsWith("__")) {
-            if (isDebugTarget) {
-                debug = {
-                    methodId: method.id,
-                    found: true,
-                    skippedReason: "magic_method",
-                    directIncomingCalls: 0,
-                    resolvedIncomingCalls: 0,
-                    interfaceIncomingCalls: 0,
-                    inheritanceIncomingCalls: 0,
-                    inheritanceDispatchIncomingCalls: 0,
-                    effectiveIncomingCalls: 0,
-                    consideredDead: false,
-                };
-            }
+            setSkippedDebug("magic_method");
             continue;
         }
-
-        const parentId = method.parent ?? "";
-        const filePath = method.file ?? "";
-        const lowerFilePath = filePath.toLowerCase();
 
         if (
             ignoreTests &&
             (lowerFilePath.includes("/test/") || lowerFilePath.includes("/tests/"))
         ) {
-            if (isDebugTarget) {
-                debug = {
-                    methodId: method.id,
-                    found: true,
-                    skippedReason: "test_file",
-                    directIncomingCalls: 0,
-                    resolvedIncomingCalls: 0,
-                    interfaceIncomingCalls: 0,
-                    inheritanceIncomingCalls: 0,
-                    inheritanceDispatchIncomingCalls: 0,
-                    effectiveIncomingCalls: 0,
-                    consideredDead: false,
-                };
-            }
+            setSkippedDebug("test_file");
             continue;
         }
 
         if (ignoreInterfaceMethods && method.parent_type === "interface") {
-            if (isDebugTarget) {
-                debug = {
-                    methodId: method.id,
-                    found: true,
-                    skippedReason: "interface_method",
-                    directIncomingCalls: 0,
-                    resolvedIncomingCalls: 0,
-                    interfaceIncomingCalls: 0,
-                    inheritanceIncomingCalls: 0,
-                    inheritanceDispatchIncomingCalls: 0,
-                    effectiveIncomingCalls: 0,
-                    consideredDead: false,
-                };
-            }
+            setSkippedDebug("interface_method");
             continue;
         }
 
@@ -220,58 +246,46 @@ export function findDeadCode(db: SQLiteDatabase, options?: DeadCodeOptions): Dea
             filePath.includes("/Controllers/") ||
             filePath.includes("/Controller/");
 
-        const isControllerAction = ["index", "show", "store", "create", "edit", "update", "destroy", "handle"].includes(lowerMethodName);
+        const isControllerAction = [
+            "index",
+            "show",
+            "store",
+            "create",
+            "edit",
+            "update",
+            "destroy",
+            "handle",
+        ].includes(lowerMethodName);
 
         if (ignoreControllerActions && isLikelyController && isControllerAction) {
-            if (isDebugTarget) {
-                debug = {
-                    methodId: method.id,
-                    found: true,
-                    skippedReason: "controller_action",
-                    directIncomingCalls: 0,
-                    resolvedIncomingCalls: 0,
-                    interfaceIncomingCalls: 0,
-                    inheritanceIncomingCalls: 0,
-                    inheritanceDispatchIncomingCalls: 0,
-                    effectiveIncomingCalls: 0,
-                    consideredDead: false,
-                };
-            }
+            setSkippedDebug("controller_action");
             continue;
         }
 
-        const directIncomingRow = countIncomingCalls.get(method.id) as { count?: number } | undefined;
-        const directIncomingCalls = Number(directIncomingRow?.count ?? 0);
+        if (
+            ignoreFrameworkMethods &&
+            isFrameworkMethod(parentId, filePath, method.name)
+        ) {
+            setSkippedDebug("framework_method");
+            continue;
+        }
 
-        const resolvedIncomingCalls = includeInterfaceResolved
-            ? Number((countResolvedIncomingCalls.get(method.id) as { count?: number } | undefined)?.count ?? 0)
-            : 0;
-
-        const interfaceIncomingRow = countInterfaceMethodIncomingCalls.get(parentId, method.name) as { count?: number } | undefined;
-        const interfaceIncomingCalls = Number(interfaceIncomingRow?.count ?? 0);
-
-        const inheritanceIncomingRow = countInheritanceFamilyIncomingCalls.get(parentId, method.name) as { count?: number } | undefined;
-        const inheritanceIncomingCalls = Number(inheritanceIncomingRow?.count ?? 0);
-
-        const inheritanceDispatchIncomingRow = countInheritanceDispatchIncomingCalls.get(parentId, method.name) as { count?: number } | undefined;
-        const inheritanceDispatchIncomingCalls = Number(inheritanceDispatchIncomingRow?.count ?? 0);
-
-        const effectiveIncomingCalls =
-            directIncomingCalls +
-            resolvedIncomingCalls +
-            interfaceIncomingCalls +
-            inheritanceIncomingCalls +
-            inheritanceDispatchIncomingCalls;
+        if (
+            ignoreAccessors &&
+            isAccessor(method.name) &&
+            isEntityLikeFile(filePath)
+        ) {
+            setSkippedDebug("entity_accessor");
+            continue;
+        }
 
         if (isDebugTarget) {
             debug = {
                 methodId: method.id,
                 found: true,
                 directIncomingCalls,
+                incomingRoutes,
                 resolvedIncomingCalls,
-                interfaceIncomingCalls,
-                inheritanceIncomingCalls,
-                inheritanceDispatchIncomingCalls,
                 effectiveIncomingCalls,
                 consideredDead: effectiveIncomingCalls === 0,
             };
@@ -284,6 +298,9 @@ export function findDeadCode(db: SQLiteDatabase, options?: DeadCodeOptions): Dea
                 file: method.file,
                 visibility: method.visibility,
                 incomingCalls: directIncomingCalls,
+                incomingRoutes,
+                category: isLikelyController ? "unrouted_controller_action" : "dead_candidate",
+                risk: isLikelyController ? "medium" : "high",
             });
         }
     }
@@ -293,18 +310,15 @@ export function findDeadCode(db: SQLiteDatabase, options?: DeadCodeOptions): Dea
         deadMethods: items.length,
         items,
         debug: debugMethodId
-            ? (debug ?? {
+            ? debug ?? {
                 methodId: debugMethodId,
                 found: false,
                 directIncomingCalls: 0,
+                incomingRoutes: 0,
                 resolvedIncomingCalls: 0,
-                interfaceIncomingCalls: 0,
-                inheritanceIncomingCalls: 0,
-                inheritanceDispatchIncomingCalls: 0,
                 effectiveIncomingCalls: 0,
                 consideredDead: false,
-            })
+            }
             : undefined,
     };
 }
-
