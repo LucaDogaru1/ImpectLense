@@ -4,6 +4,7 @@ import { resolveClassName } from "../../resolvers/resolveClassName";
 import { graph } from "../../../../graph/graph";
 import { ensureModelField } from "../../semantic/fieldNodes";
 import { extractNestedArrayFieldEntries } from "../../semantic/nestedArrayFields";
+import { resolveExpressionElementType } from "../../semantic/phpDocPropertyTypes";
 
 export function assignmentExpression(
     rootNodeChild: Parser.SyntaxNode,
@@ -18,6 +19,15 @@ export function assignmentExpression(
     recordModelPropertyArrayShape(left, right, context, file);
 
     const leftKey = normalizeAssignedTarget(left.text);
+
+    if (left.type === "variable_name") {
+        const elementType = resolveExpressionElementType(right, context);
+
+        if (elementType) {
+            context.variableTypes.set(left.text, elementType);
+            context.variableTypes.set(left.text.replace(/^\$/, ""), elementType);
+        }
+    }
 
     if (leftKey.startsWith("this.") && right.type === "variable_name") {
         const sourceType =

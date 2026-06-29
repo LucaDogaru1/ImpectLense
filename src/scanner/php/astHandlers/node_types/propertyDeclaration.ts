@@ -1,6 +1,7 @@
 import Parser from "tree-sitter";
 import { WalkContext } from "../../walk/context";
 import { ensureModelField, cleanPhpString, isLikelyFieldName } from "../../semantic/fieldNodes";
+import { applyPropertyPhpDocTypes } from "../../semantic/phpDocPropertyTypes";
 
 export function propertyDeclarationType(
     node: Parser.SyntaxNode,
@@ -9,8 +10,10 @@ export function propertyDeclarationType(
 ): void {
     if (!context.currentClass) return;
 
+    applyPropertyPhpDocTypes(node, context);
+
     for (const child of node.namedChildren) {
-        if (child.type !== "property_declarator") continue;
+        if (child.type !== "property_declarator" && child.type !== "property_element") continue;
 
         const nameNode = child.childForFieldName("name") ?? child.namedChildren.find(c => c.type === "variable_name");
         if (!nameNode) continue;

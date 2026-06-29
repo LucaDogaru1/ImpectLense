@@ -1,7 +1,7 @@
 {
   "name": "impactlens",
-  "version": "1.1.2",
-  "description": "Static code graph scanner and ticket-driven briefing CLI for AI-assisted development. currently only supports php and js/vue",
+  "version": "1.1.3",
+  "description": "Static code graph scanner and ticket-driven briefing CLI for AI-assisted development. currently only supports php,js,vue and nuxt",
   "main": "bin/impactlens.js",
   "bin": {
     "impactlens": "bin/impactlens.js"
