@@ -40,6 +40,8 @@ export interface DeadCodeOptions {
     ignoreInterfaceMethods?: boolean;
     ignoreFrameworkMethods?: boolean;
     ignoreAccessors?: boolean;
+    ignoreAbstractImplementations?: boolean;
+    includeExtendsResolved?: boolean;
     debugMethodId?: string;
     ignoreBaseClasses?: boolean;
 }
@@ -121,6 +123,63 @@ function isLikelyBaseClass(parentId: string, filePath: string): boolean {
     );
 }
 
+function loadAbstractMethodIds(db: SQLiteDatabase): Set<string> {
+    const abstractMethodIds = new Set<string>();
+    const rows = db.prepare(`
+        SELECT id, raw_json
+        FROM nodes
+        WHERE type = 'method'
+    `).all() as Array<{ id: string; raw_json: string }>;
+
+    for (const row of rows) {
+        try {
+            const node = JSON.parse(row.raw_json) as { isAbstract?: boolean };
+
+            if (node.isAbstract === true) {
+                abstractMethodIds.add(row.id);
+            }
+        } catch {
+            continue;
+        }
+    }
+
+    return abstractMethodIds;
+}
+
+function buildExtendsParentMap(db: SQLiteDatabase): Map<string, string> {
+    const extendsParentByClass = new Map<string, string>();
+    const rows = db.prepare(`
+        SELECT from_id, to_id
+        FROM edges
+        WHERE type = 'EXTENDS'
+    `).all() as Array<{ from_id: string; to_id: string }>;
+
+    for (const row of rows) {
+        extendsParentByClass.set(row.from_id, row.to_id);
+    }
+
+    return extendsParentByClass;
+}
+
+function implementsAbstractMethod(
+    classId: string,
+    methodName: string,
+    extendsParentByClass: Map<string, string>,
+    abstractMethodIds: Set<string>
+): boolean {
+    let currentClassId: string | undefined = classId;
+
+    while (currentClassId) {
+        if (abstractMethodIds.has(`${currentClassId}::${methodName}`)) {
+            return true;
+        }
+
+        currentClassId = extendsParentByClass.get(currentClassId);
+    }
+
+    return false;
+}
+
 export function findDeadCode(db: SQLiteDatabase, options?: DeadCodeOptions): DeadCodeResult {
     const includeInterfaceResolved = options?.includeInterfaceResolved ?? false;
     const includeRoutes = options?.includeRoutes ?? true;
@@ -132,6 +191,8 @@ export function findDeadCode(db: SQLiteDatabase, options?: DeadCodeOptions): Dea
     const ignoreInterfaceMethods = options?.ignoreInterfaceMethods ?? true;
     const ignoreFrameworkMethods = options?.ignoreFrameworkMethods ?? true;
     const ignoreAccessors = options?.ignoreAccessors ?? false;
+    const ignoreAbstractImplementations = options?.ignoreAbstractImplementations ?? true;
+    const includeExtendsResolved = options?.includeExtendsResolved ?? true;
     const debugMethodId = options?.debugMethodId;
     const ignoreBaseClasses = options?.ignoreBaseClasses ?? true;
 
@@ -178,11 +239,18 @@ export function findDeadCode(db: SQLiteDatabase, options?: DeadCodeOptions): Dea
             db.prepare(`
                 SELECT to_id, COUNT(*) AS count
                 FROM edges
-                WHERE type IN ('BLADE_USES_ACTION', 'BLADE_REFERENCES_SYMBOL')
+                WHERE type IN ('BLADE_USES_ACTION', 'BLADE_REFERENCES_SYMBOL', 'BLADE_CALLS')
                 GROUP BY to_id
             `).all() as Array<{ to_id: string; count: number }>
         )
         : new Map<string, number>();
+
+    const abstractMethodIds = ignoreAbstractImplementations
+        ? loadAbstractMethodIds(db)
+        : new Set<string>();
+    const extendsParentByClass = ignoreAbstractImplementations || includeExtendsResolved
+        ? buildExtendsParentMap(db)
+        : new Map<string, string>();
 
     const resolvedIncomingByMethod = includeInterfaceResolved
         ? buildCountMap(
@@ -191,6 +259,18 @@ export function findDeadCode(db: SQLiteDatabase, options?: DeadCodeOptions): Dea
                 FROM edges
                 WHERE type = 'CALLS'
                   AND call_type = 'INTERFACE_RESOLVED'
+                GROUP BY to_id
+            `).all() as Array<{ to_id: string; count: number }>
+        )
+        : new Map<string, number>();
+
+    const extendsResolvedIncomingByMethod = includeExtendsResolved
+        ? buildCountMap(
+            db.prepare(`
+                SELECT to_id, COUNT(*) AS count
+                FROM edges
+                WHERE type = 'CALLS'
+                  AND call_type IN ('EXTENDS_RESOLVED', 'OVERRIDE_RESOLVED')
                 GROUP BY to_id
             `).all() as Array<{ to_id: string; count: number }>
         )
@@ -209,8 +289,13 @@ export function findDeadCode(db: SQLiteDatabase, options?: DeadCodeOptions): Dea
         const incomingRoutes = incomingRoutesByMethod.get(method.id) ?? 0;
         const incomingBladeRefs = incomingBladeRefsByMethod.get(method.id) ?? 0;
         const resolvedIncomingCalls = resolvedIncomingByMethod.get(method.id) ?? 0;
+        const extendsResolvedIncomingCalls = extendsResolvedIncomingByMethod.get(method.id) ?? 0;
         const effectiveIncomingCalls =
-            directIncomingCalls + incomingRoutes + incomingBladeRefs + resolvedIncomingCalls;
+            directIncomingCalls +
+            incomingRoutes +
+            incomingBladeRefs +
+            resolvedIncomingCalls +
+            extendsResolvedIncomingCalls;
 
         const setSkippedDebug = (skippedReason: string): void => {
             if (!isDebugTarget) {
@@ -293,6 +378,20 @@ export function findDeadCode(db: SQLiteDatabase, options?: DeadCodeOptions): Dea
             isEntityLikeFile(filePath)
         ) {
             setSkippedDebug("entity_accessor");
+            continue;
+        }
+
+        if (
+            ignoreAbstractImplementations &&
+            parentId &&
+            implementsAbstractMethod(
+                parentId,
+                method.name,
+                extendsParentByClass,
+                abstractMethodIds
+            )
+        ) {
+            setSkippedDebug("abstract_implementation");
             continue;
         }
 

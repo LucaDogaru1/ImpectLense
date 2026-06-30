@@ -1,8 +1,10 @@
 import Parser from "tree-sitter";
 import { WalkContext } from "../../walk/context";
 import { resolveClassName } from "../../resolvers/resolveClassName";
+import { lookupMethodTarget, resolveStaticClassName } from "../../resolvers/lookupMethodOnType";
 import { graph } from "../../../../graph/graph";
 import { configReferenceType } from "./configReference";
+import { isConfigFacadeGetCall } from "./functionCallExpression";
 import {
     buildSingleRoute,
     expandResourceRoutes,
@@ -22,6 +24,8 @@ export function scopedCallExpressionType(
     const rawClass = rootNodeChild.children.find(child => child.type === "name")?.text;
     if (rawClass === "config") {
         configReferenceType(rootNodeChild, context);
+    } else if (isConfigFacadeGetCall(rootNodeChild)) {
+        configReferenceType(rootNodeChild, context);
     }
 
     handleStaticCall(rootNodeChild, context);
@@ -32,23 +36,40 @@ function handleStaticCall(
     context: WalkContext
 ): void {
     const currentMethod = context.currentMethod ?? "";
-    const parts: string[] = [];
+    const targetMethodName = node.childForFieldName("name")?.text
+        ?? node.children.find(child => child.type === "name")?.text;
+    const relativeScope = node.children.find(child => child.type === "relative_scope")?.text;
+    const classNameNode = node.children.find(
+        child => child.type === "name" && child.text !== targetMethodName
+    );
 
-    for (const child of node.children) {
-        if (child.type === "name") {
-            parts.push(child.text);
-        }
+    if (!currentMethod || !targetMethodName) {
+        return;
     }
 
-    const rawClass = parts[0];
-    const targetMethodName = parts[1];
+    let resolvedClass: string | undefined;
 
-    if (!currentMethod || !rawClass || !targetMethodName) return;
+    if (relativeScope === "self" || relativeScope === "static") {
+        resolvedClass = context.currentClass;
+    } else if (relativeScope === "parent") {
+        resolvedClass = context.currentClass
+            ? resolveStaticClassName("parent", context)
+            : undefined;
+    } else if (classNameNode) {
+        resolvedClass = resolveClassName(classNameNode.text, context);
+    } else {
+        return;
+    }
 
-    const resolvedClass = resolveClassName(rawClass, context);
-    if (!resolvedClass) return;
+    if (!resolvedClass) {
+        return;
+    }
 
-    const targetMethod = `${resolvedClass}::${targetMethodName}`;
+    const targetMethod = lookupMethodTarget(resolvedClass, targetMethodName);
+
+    if (!targetMethod) {
+        return;
+    }
 
     graph.edges.set(`${currentMethod}->${targetMethod}`, {
         from: currentMethod,

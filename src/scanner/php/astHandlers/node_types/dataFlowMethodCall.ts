@@ -1,6 +1,10 @@
 import Parser from "tree-sitter";
 import { WalkContext } from "../../walk/context";
 import { graph } from "../../../../graph/graph";
+import { lookupMethodTarget } from "../../resolvers/lookupMethodOnType";
+import { resolveExpressionType } from "../../semantic/resolveExpressionType";
+import { resolveDataFlowSourceId } from "./DataFlowAssignment";
+import { argumentsNode, rootVariableFromArgument } from "../argumentsNode";
 
 export function dataFlowMethodCall(
     node: Parser.SyntaxNode,
@@ -8,100 +12,50 @@ export function dataFlowMethodCall(
 ): void {
     if (!context.currentMethod) return;
 
-    const args = node.childForFieldName("arguments");
+    const args = argumentsNode(node);
     if (!args) return;
 
     const targetMethod = resolveTargetMethod(node, context);
     if (!targetMethod) return;
 
     args.namedChildren.forEach((arg, index) => {
-        const variableName = getRootVariableName(arg.text);
+        const variableName = rootVariableFromArgument(arg);
         if (!variableName) return;
 
         const fields = context.dataFlows.get(variableName);
         if (!fields) return;
 
-        const targetParameterId = findTargetParameterByIndex(
-            targetMethod,
-            index
-        );
-
         for (const field of fields) {
-            const sourceVariableFieldId =
-                `${context.currentMethod}::${variableName}.${field}`;
-
-            graph.edges.set(
-                `${sourceVariableFieldId}->${targetMethod}:FLOWS_TO:${index}`,
-                {
-                    from: sourceVariableFieldId,
-                    to: targetMethod,
-                    type: "FLOWS_TO",
-                    via: variableName,
-                    argumentIndex: index,
-                    confidence: 1,
-                }
+            const sourceId = resolveDataFlowSourceId(
+                context.currentMethod!,
+                variableName,
+                field
             );
 
-            if (targetParameterId) {
-                graph.edges.set(
-                    `${sourceVariableFieldId}->${targetParameterId}:ARGUMENT_TO:${index}`,
-                    {
-                        from: sourceVariableFieldId,
-                        to: targetParameterId,
-                        type: "ARGUMENT_TO",
-                        via: variableName,
-                        argumentIndex: index,
-                        confidence: 1,
-                    }
-                );
-            }
+            graph.edges.set(`${sourceId}->${targetMethod}:FLOWS_TO:${index}`, {
+                from: sourceId,
+                to: targetMethod,
+                type: "FLOWS_TO",
+                via: variableName,
+                argumentIndex: index,
+                confidence: 1,
+            });
         }
     });
-}
-
-function findTargetParameterByIndex(
-    targetMethod: string,
-    argumentIndex: number
-): string | null {
-    for (const edge of graph.edges.values()) {
-        if (
-            edge.from === targetMethod &&
-            edge.type === "HAS_PARAMETER" &&
-            edge.argumentIndex === argumentIndex
-        ) {
-            return edge.to;
-        }
-    }
-
-    return null;
 }
 
 function resolveTargetMethod(
     node: Parser.SyntaxNode,
     context: WalkContext
 ): string | null {
-    const method = node.childForFieldName("name")?.text;
-    const object = node.childForFieldName("object")?.text;
+    const methodName = node.childForFieldName("name")?.text;
+    const objectNode = node.childForFieldName("object");
 
-    if (!method || !object) return null;
+    if (!methodName || !objectNode) return null;
 
-    if (object.startsWith("$this->")) {
-        const property = object.replace("$this->", "");
+    const objectType = resolveExpressionType(objectNode, context);
 
-        const className =
-            context.classPropertyTypes.get(property) ??
-            context.classPropertyTypes.get(`this.${property}`);
+    if (!objectType) return null;
 
-        if (!className) return null;
-
-        return `${className}::${method}`;
-    }
-
-    return null;
-}
-
-function getRootVariableName(value: string): string | null {
-    const match = value.match(/^\$[a-zA-Z_][a-zA-Z0-9_]*/);
-
-    return match?.[0] ?? null;
+    return lookupMethodTarget(objectType, methodName) ?? null;
 }

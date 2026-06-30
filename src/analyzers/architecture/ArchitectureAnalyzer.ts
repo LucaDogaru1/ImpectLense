@@ -330,6 +330,71 @@ function isArchitecturalViolation(
     return null;
 }
 
+export function analyzeArchitectureForNodes(
+    db: SQLiteDatabase,
+    nodeIds: string[],
+    options?: ArchitectureOptions,
+): ArchitectureViolation[] {
+    if (nodeIds.length === 0) {
+        return [];
+    }
+
+    const includeDependsOn = options?.includeDependsOn ?? false;
+    const includeInterfaceResolved = options?.includeInterfaceResolved ?? false;
+    const compiledRules = compileArchitectureRules(options?.ruleConfig);
+    const placeholders = nodeIds.map(() => "?").join(", ");
+
+    const edgeRows = db.prepare(`
+        SELECT from_id, to_id, type, call_type
+        FROM edges
+        WHERE (from_id IN (${placeholders}) OR to_id IN (${placeholders}))
+          AND (
+            (
+                type = 'CALLS'
+                AND (
+                    ? = 1
+                    OR call_type IS NULL
+                    OR call_type != 'INTERFACE_RESOLVED'
+                )
+            )
+            OR (? = 1 AND type = 'DEPENDS_ON')
+          )
+        ORDER BY from_id ASC, to_id ASC
+    `).all(
+        ...nodeIds,
+        ...nodeIds,
+        includeInterfaceResolved ? 1 : 0,
+        includeDependsOn ? 1 : 0,
+    ) as Array<{ from_id: string; to_id: string; type: string; call_type: string | null }>;
+
+    const violations: ArchitectureViolation[] = [];
+    const seen = new Set<string>();
+
+    for (const edge of edgeRows) {
+        const key = `${edge.from_id}->${edge.to_id}:${edge.type}`;
+        if (seen.has(key)) {
+            continue;
+        }
+        seen.add(key);
+
+        const violation = isArchitecturalViolation(edge.from_id, edge.to_id, edge.type, compiledRules);
+        if (violation) {
+            violations.push(violation);
+        }
+    }
+
+    violations.sort((a, b) => {
+        const severityRankA = a.severity === "HIGH" ? 0 : 1;
+        const severityRankB = b.severity === "HIGH" ? 0 : 1;
+        if (severityRankA !== severityRankB) {
+            return severityRankA - severityRankB;
+        }
+        return `${a.fromId}->${a.toId}`.localeCompare(`${b.fromId}->${b.toId}`);
+    });
+
+    return violations;
+}
+
 export function analyzeArchitecture(db: SQLiteDatabase, options?: ArchitectureOptions): ArchitectureResult {
     const includeDependsOn = options?.includeDependsOn ?? false;
     const includeInterfaceResolved = options?.includeInterfaceResolved ?? false;

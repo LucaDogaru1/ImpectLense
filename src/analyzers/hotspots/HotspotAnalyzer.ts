@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { incomingUsageEdgeWhereSql } from "../../graph/queries/graphEntryPoints";
 
 export interface HotspotItem {
     id: string;
@@ -43,18 +44,16 @@ export function analyzeHotspots(db: SQLiteDatabase, options?: HotspotOptions): H
     const incomingCounts = new Map<string, number>();
     const outgoingCounts = new Map<string, number>();
 
+    const incomingWhere = incomingUsageEdgeWhereSql({
+        includeInterfaceResolved,
+        includeDependsOn,
+        includeEntryPoints: true,
+    });
+
     const incomingRows = db.prepare(`
         SELECT to_id AS id, COUNT(*) AS count
         FROM edges
-        WHERE (
-            type = 'CALLS'
-            AND (
-                ? = 1
-                OR call_type IS NULL
-                OR call_type != 'INTERFACE_RESOLVED'
-            )
-        )
-           OR (? = 1 AND type = 'DEPENDS_ON')
+        WHERE ${incomingWhere}
         GROUP BY to_id
     `).all(includeInterfaceResolved ? 1 : 0, includeDependsOn ? 1 : 0) as Array<{ id: string; count: number }>;
 

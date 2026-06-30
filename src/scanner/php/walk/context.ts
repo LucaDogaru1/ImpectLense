@@ -17,4 +17,7 @@ export interface WalkContext {
     extractedFields: ExtractedField[];
 
     dataFlows: Map<string, Set<string>>;
+
+    /** Model class targeted by an enclosing create/update/save call (for PERSISTS). */
+    persistTargetClass?: string;
 }

@@ -95,7 +95,7 @@ try {
     log(chalk.blue("----------------------------------------------------"));
     log(`   risk: ${chalk.white.bold(result.risk)}`);
     log(`   score: ${chalk.white(result.score)} ${chalk.gray("(relative impact score)")}`);
-    log(`   affected callers: ${chalk.white(result.affectedCallers)}`);
+    log(`   upstream consumers: ${chalk.white(result.affectedCallers)} ${chalk.gray(`(entry points: ${result.components.directEntryPoints}, call-chain: ${result.components.directCallChainCallers})`)}`);
     log(`   methods used by target: ${chalk.white(result.methodsUsedByTarget)}`);
     log(`   affected files: ${chalk.white(result.affectedFiles)}`);
     if (verbose && result.affectedFilesList.length > 0) {
@@ -114,14 +114,14 @@ try {
     log(`     ${chalk.gray("inspected edges:")} ${chalk.white(result.inspectedEdges)}`);
     log();
 
-    log(chalk.yellow.bold("Affected callers"));
+    log(chalk.yellow.bold("Upstream consumers"));
     log(chalk.yellow("----------------------------------------------------"));
     if (result.affectedCallersList.length === 0) {
         log(chalk.gray("   -"));
     } else {
         for (const item of result.affectedCallersList) {
             log(`   ${chalk.yellow("*")} ${chalk.white(item.id)}`);
-            log(`     ${chalk.gray("distance:")} ${chalk.white(item.distance)} ${chalk.gray("score:")} ${chalk.white(item.score)}`);
+            log(`     ${chalk.gray("relation:")} ${chalk.white(item.relationType)} ${chalk.gray("distance:")} ${chalk.white(item.distance)} ${chalk.gray("score:")} ${chalk.white(item.score)}`);
             if (item.file) {
                 log(`     ${chalk.gray("file:")} ${chalk.gray(item.file)}`);
             }

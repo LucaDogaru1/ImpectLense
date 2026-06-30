@@ -2,8 +2,27 @@ import Parser from "tree-sitter";
 import { graph } from "../../../graph/graph";
 import { resolveClassName } from "../resolvers/resolveClassName";
 import { WalkContext } from "./context";
+import { elementTypeFromCollectionType } from "../semantic/phpDocPropertyTypes";
 
 export const classPropertyTypesRegistry = new Map<string, Map<string, string>>();
+
+export function lookupClassPropertyType(
+    classId: string,
+    propertyName: string
+): string | undefined {
+    const types = classPropertyTypesRegistry.get(classId);
+
+    if (!types) {
+        return undefined;
+    }
+
+    const propertyKey = `this.${propertyName}`;
+
+    return (
+        types.get(propertyKey) ??
+        elementTypeFromCollectionType(types.get(propertyKey))
+    );
+}
 
 export function classPropertyTypesForClass(
     classNode: Parser.SyntaxNode,
@@ -14,7 +33,7 @@ export function classPropertyTypesForClass(
     const baseClause = classNode.namedChildren.find(child => child.type === "base_clause");
     if (baseClause) {
         for (const child of baseClause.namedChildren) {
-            if (child.type !== "name") {
+            if (child.type !== "name" && child.type !== "qualified_name") {
                 continue;
             }
 

@@ -73,10 +73,11 @@ try {
     log(`   include interface resolved: ${chalk.white(String(result.includeInterfaceResolved))}`);
     log(`   limit per section: ${chalk.white(result.limit)}`);
     log(`   score formula: ${chalk.white("score = incoming + outgoing")}`);
+    log(`   incoming includes: ${chalk.white("CALLS + ROUTES_TO + BLADE_USES_ACTION")}${includeDependsOn ? chalk.white(" + DEPENDS_ON") : ""}`);
     log(`   dependency score formula: ${chalk.white("dependency score = incoming dependencies + outgoing dependencies")}`);
     log();
 
-    const incomingLabel = result.includeDependsOn ? "incoming links" : "incoming calls";
+    const incomingLabel = result.includeDependsOn ? "incoming links" : "incoming links";
     const outgoingLabel = result.includeDependsOn ? "outgoing links" : "outgoing calls";
 
     printHotspotSection("Method hotspots", result.methodHotspots, incomingLabel, outgoingLabel);

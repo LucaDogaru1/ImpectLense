@@ -1,6 +1,10 @@
 import Parser from "tree-sitter";
 import { WalkContext } from "../../walk/context";
 import { graph } from "../../../../graph/graph";
+import {
+    extractValidationRulesFromArray,
+    findFirstArrayInNode,
+} from "../../semantic/validationRules";
 
 export function validationExpressionType(
     node: Parser.SyntaxNode,
@@ -14,11 +18,11 @@ export function validationExpressionType(
     if (!context.currentMethod) return;
 
     const argsNode = node.childForFieldName("arguments");
-    const arrayNode = findFirstDescendantOfType(argsNode, "array_creation_expression");
+    const arrayNode = findFirstArrayInNode(argsNode);
 
     if (!arrayNode) return;
 
-    const validationRules = extractValidationRules(arrayNode);
+    const validationRules = extractValidationRulesFromArray(arrayNode);
 
     for (const rule of validationRules) {
         const validationId = `validation:${context.currentMethod}:${rule.field}`;
@@ -48,55 +52,4 @@ export function validationExpressionType(
             type: "VALIDATES_FIELD",
         });
     }
-}
-
-function extractValidationRules(arrayNode: Parser.SyntaxNode): Array<{
-    field: string;
-    rules: string;
-}> {
-    const result: Array<{ field: string; rules: string }> = [];
-
-    for (const child of arrayNode.namedChildren) {
-        if (child.type !== "array_element_initializer") continue;
-
-        const strings = child.namedChildren.filter(c => c.type === "string");
-
-        const keyNode = strings[0];
-        const valueNode = strings[1];
-
-        if (!keyNode || !valueNode) continue;
-
-        const field = cleanPhpString(keyNode.text);
-        const rules = cleanPhpString(valueNode.text);
-
-        if (!field || !rules) continue;
-
-        result.push({ field, rules });
-    }
-
-    return result;
-}
-
-function findFirstDescendantOfType(
-    node: Parser.SyntaxNode | null | undefined,
-    type: string
-): Parser.SyntaxNode | undefined {
-    if (!node) return undefined;
-
-    if (node.type === type) return node;
-
-    for (const child of node.namedChildren) {
-        const found = findFirstDescendantOfType(child, type);
-
-        if (found) return found;
-    }
-
-    return undefined;
-}
-
-function cleanPhpString(value: string): string {
-    return value
-        .trim()
-        .replace(/^['"]/, "")
-        .replace(/['"]$/, "");
 }

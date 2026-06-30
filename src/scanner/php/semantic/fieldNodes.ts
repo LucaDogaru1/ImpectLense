@@ -1,4 +1,5 @@
 import { graph } from "../../../graph/graph";
+import { isBuiltinTypeName } from "./builtinTypes";
 
 export function modelFieldId(className: string, fieldName: string): string {
     return `model_field:${className}:${fieldName}`;
@@ -10,6 +11,11 @@ export function responseFieldId(className: string, fieldName: string): string {
 
 export function ensureModelField(className: string, fieldName: string, file?: string): string {
     const id = modelFieldId(className, fieldName);
+    const leafClassName = className.split("\\").pop() ?? className;
+
+    if (isBuiltinTypeName(leafClassName)) {
+        return id;
+    }
 
     graph.nodes.set(id, {
         id,
@@ -59,7 +65,7 @@ export function linkPersists(
         from: methodId,
         to: modelFieldNodeId,
         type: "PERSISTS",
-        via: via ?? null,
+        via: via ?? undefined,
         confidence: 1,
         reason: "Method writes/persists model field",
     });

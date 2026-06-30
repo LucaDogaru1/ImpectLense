@@ -14,9 +14,7 @@ export function resolveExtends(child: Parser.SyntaxNode, context: WalkContext)
     if(!baseClause) return;
 
     for (const child of baseClause.namedChildren) {
-        if (
-            child.type !== "name"
-        ) {
+        if (child.type !== "name" && child.type !== "qualified_name") {
             continue;
         }
 

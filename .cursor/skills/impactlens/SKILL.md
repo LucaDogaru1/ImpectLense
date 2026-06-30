@@ -23,7 +23,7 @@ Never treat any ImpactLens output as authoritative. Verify everything in code be
 
 | Situation | Use |
 |-----------|-----|
-| You already know a class, method, endpoint, route, or file | `ai-context`, `change-impact`, `impact` — skip `analyze:ticket` |
+| You already know a class, method, endpoint, route, or file | `find` (if id unclear), then `ai-context`, `change-impact`, `impact` |
 | Ticket has technical anchors (endpoints, field paths, symbols, routes, namespaces) and you want graph-ranked entrypoints | `analyze:ticket` (optional), then graph commands from the briefing |
 | Ticket is vague natural language only | Do **not** run `analyze:ticket`; search the repo yourself, then use graph commands once you have a symbol |
 | You need blast radius or dependency context around a known symbol | `change-impact`, `impact`, `ai-context` |
@@ -81,9 +81,11 @@ Read the briefing (when used) in this order: Read first → Flow paths → Warni
 
 ## 3. Investigate with the graph
 
-Once you have a symbol (from your own search or from an optional briefing):
+Once you have a symbol (from your own search, `find`, or from an optional briefing):
 
 ```bash
+impactlens find sqlite/Graph.sqlite PaymentController
+impactlens find sqlite/Graph.sqlite "POST /payments" --kind=route
 impactlens ai-context sqlite/Graph.sqlite "<symbol>" --compact
 impactlens change-impact sqlite/Graph.sqlite "<symbol>"
 impactlens impact sqlite/Graph.sqlite "<symbol>"
@@ -133,6 +135,7 @@ Record feedback **once per task**. Skip feedback if you could not meaningfully e
 One of:
 
 * `analyze:ticket`
+* `find`
 * `ai-context`
 * `change-impact`
 * `impact`

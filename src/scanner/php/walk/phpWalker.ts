@@ -11,6 +11,7 @@ import {scopedCallExpressionType} from "../astHandlers/node_types/scopedCallExpr
 import {interfaceDeclaration} from "../astHandlers/node_types/interfaceDeclaration";
 import {resolveImplements} from "../resolvers/resolveImplements";
 import {resolveExtends} from "../resolvers/resolveExtends";
+import {resolveTraits} from "../resolvers/resolveTraits";
 import {arrayElementInitializerType} from "../astHandlers/node_types/arrayElementInitializer";
 import {requestInputType} from "../astHandlers/node_types/requestInput";
 import {subscriptExpressionType} from "../astHandlers/node_types/subscriptExpression";
@@ -19,10 +20,19 @@ import {dataFlowAssignment} from "../astHandlers/node_types/DataFlowAssignment";
 import {dataFlowMethodCall} from "../astHandlers/node_types/dataFlowMethodCall";
 import {propertyDeclarationType} from "../astHandlers/node_types/propertyDeclaration";
 import {returnStatementType} from "../astHandlers/node_types/returnStatement";
+import {extractFormRequestRules} from "../astHandlers/node_types/formRequestRules";
 import {persistArrayElementType} from "../astHandlers/node_types/persistArrayElement";
+import {
+    resolvePersistTargetFromMemberCall,
+    resolvePersistTargetFromScopedCall,
+} from "../semantic/persistTarget";
 import {configLiteralType} from "../astHandlers/node_types/configLiteral";
 import {functionCallExpressionType} from "../astHandlers/node_types/functionCallExpression";
 import {classPropertyTypesForClass} from "./classPropertyTypesRegistry";
+import {traitType} from "../astHandlers/node_types/trait";
+import {foreachStatementType} from "../astHandlers/node_types/foreachStatement";
+import {objectCreationExpressionType} from "../astHandlers/node_types/objectCreationExpression";
+import {applyClassPhpDocProperties} from "../semantic/phpDocPropertyTypes";
 
 export default function walk(rootNode: Parser.SyntaxNode, file:string, context: WalkContext):void {
     for(const child of rootNode.children) {
@@ -46,7 +56,19 @@ export default function walk(rootNode: Parser.SyntaxNode, file:string, context: 
                     classPropertyTypes: classPropertyTypesForClass(child, context, currentClass),
                 };
                 resolveExtends(child, childContext);
+                resolveTraits(child, childContext);
                 resolveImplements(child, childContext);
+                applyClassPhpDocProperties(child, childContext);
+                break;
+            }
+            case "trait_declaration": {
+                const currentTrait = traitType(child, file, context);
+                childContext = {
+                    ...context,
+                    currentClass: currentTrait,
+                    currentInterface: undefined,
+                    classPropertyTypes: new Map<string, string>(),
+                };
                 break;
             }
             case "interface_declaration" :
@@ -79,10 +101,20 @@ export default function walk(rootNode: Parser.SyntaxNode, file:string, context: 
                 break;
             case "scoped_call_expression":
                 scopedCallExpressionType(child, childContext);
+                {
+                    const persistTarget = resolvePersistTargetFromScopedCall(child, childContext);
+                    if (persistTarget) {
+                        childContext = { ...childContext, persistTargetClass: persistTarget };
+                    }
+                }
                 break;
 
             case "function_call_expression":
                 functionCallExpressionType(child, childContext);
+                break;
+
+            case "object_creation_expression":
+                objectCreationExpressionType(child, childContext);
                 break;
 
             case "array_element_initializer":
@@ -95,6 +127,12 @@ export default function walk(rootNode: Parser.SyntaxNode, file:string, context: 
                 requestInputType(child, childContext);
                 validationExpressionType(child, childContext);
                 dataFlowMethodCall(child, childContext);
+                {
+                    const persistTarget = resolvePersistTargetFromMemberCall(child, childContext);
+                    if (persistTarget) {
+                        childContext = { ...childContext, persistTargetClass: persistTarget };
+                    }
+                }
                 break;
 
             case "subscript_expression":
@@ -106,7 +144,12 @@ export default function walk(rootNode: Parser.SyntaxNode, file:string, context: 
                 break;
 
             case "return_statement":
+                extractFormRequestRules(child, childContext);
                 returnStatementType(child, childContext, file);
+                break;
+
+            case "foreach_statement":
+                childContext = foreachStatementType(child, childContext);
                 break;
 
             case "string":

@@ -1,44 +1,68 @@
 import Parser from "tree-sitter";
 import { graph } from "../../../../graph/graph";
 import { WalkContext } from "../../walk/context";
+import { lookupMethodTarget } from "../../resolvers/lookupMethodOnType";
+import { resolveExpressionType } from "../../semantic/resolveExpressionType";
 import { sqsMethodCallType } from "./sqsMethodCall";
+
+function resolveVariableClassName(variableName: string, context: WalkContext): string | undefined {
+    return (
+        context.variableTypes.get(variableName) ??
+        context.variableTypes.get(variableName.replace(/^\$/, ""))
+    );
+}
+
+function resolveObjectClassName(
+    objectNode: Parser.SyntaxNode,
+    context: WalkContext
+): string | undefined {
+    if (objectNode.type === "variable_name") {
+        if (objectNode.text === "$this" && context.currentClass) {
+            return context.currentClass;
+        }
+
+        return resolveVariableClassName(objectNode.text, context);
+    }
+
+    if (objectNode.type === "member_call_expression" || objectNode.type === "object_creation_expression") {
+        return resolveExpressionType(objectNode, context);
+    }
+
+    if (objectNode.type === "member_access_expression") {
+        return resolveExpressionType(objectNode, context);
+    }
+
+    if (objectNode.text === "$this" && context.currentClass) {
+        return context.currentClass;
+    }
+
+    if (objectNode.type === "member_access_expression" && objectNode.text.startsWith("$this->")) {
+        const propertyName = objectNode.childForFieldName("name")?.text ?? objectNode.text.replace("$this->", "");
+        const normalizedProperty = `this.${propertyName}`;
+
+        return (
+            context.variableTypes.get(normalizedProperty) ??
+            context.classPropertyTypes.get(normalizedProperty) ??
+            context.classPropertyTypes.get(propertyName)
+        );
+    }
+
+    return resolveExpressionType(objectNode, context);
+}
 
 export function memberCallExpressionType(
     rootNode: Parser.SyntaxNode,
     context: WalkContext
 ): void {
     const calledName = rootNode.childForFieldName("name")?.text;
-    const objectNode = rootNode.childForFieldName("object")?.text;
+    const objectNode = rootNode.childForFieldName("object");
 
     if (!calledName || !objectNode || !context.currentMethod) {
         return;
     }
 
-    let targetMethod: string | undefined;
-
-    if (objectNode === "$this" && context.currentClass) {
-        targetMethod = `${context.currentClass}::${calledName}`;
-    } else if (objectNode.startsWith("$this->")) {
-        const propertyName = objectNode.replace("$this->", "");
-        const normalizedProperty = `this.${propertyName}`;
-
-        const className =
-            context.variableTypes.get(normalizedProperty) ??
-            context.classPropertyTypes.get(normalizedProperty) ??
-            context.classPropertyTypes.get(propertyName);
-
-        if (className) {
-            targetMethod = `${className}::${calledName}`;
-        }
-    } else {
-        const className =
-            context.variableTypes.get(objectNode) ??
-            context.classPropertyTypes.get(objectNode);
-
-        if (className) {
-            targetMethod = `${className}::${calledName}`;
-        }
-    }
+    const className = resolveObjectClassName(objectNode, context);
+    const targetMethod = className ? lookupMethodTarget(className, calledName) : undefined;
 
     if (!targetMethod) {
         return;

@@ -4,6 +4,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { analyzeChangeImpact } from "../../analyzers/impact/ImpactScoringAnalyzer";
 import { findInheritanceChain, getRelationTargetId, resolveMethodThroughInheritance } from "../../graph/queries/GraphQueries";
+import {
+    findIncomingGraphEntries,
+    formatGraphEntryLabel,
+    hasGraphEntry,
+    isFrameworkNoiseNodeId,
+} from "../../graph/queries/navigationQueries";
 import { getIntOption, getOptionValue, hasFlag } from "../shared/cliArgs";
 
 let report = "";
@@ -79,6 +85,13 @@ const usages = db.prepare(`
       )
 `).all(targetId, includeInterfaceResolved ? 1 : 0) as any[];
 
+const graphEntries = target.type === "method"
+    ? findIncomingGraphEntries(db, targetId, { includeInterfaceResolved, limit })
+    : [];
+
+const entryPoints = graphEntries.filter(entry => entry.kind !== "call");
+const hasIncomingUsage = usages.length > 0 || hasGraphEntry(graphEntries);
+
 const dependencies = db.prepare(`
     SELECT
         e.to_id,
@@ -100,6 +113,8 @@ const dependencies = db.prepare(`
           OR e.call_type != 'INTERFACE_RESOLVED'
       )
 `).all(targetId, includeInterfaceResolved ? 1 : 0) as any[];
+
+const visibleDependencies = dependencies.filter(dep => !isFrameworkNoiseNodeId(dep.to_id));
 
 const resolvedDependencies = includeInterfaceResolved ? db.prepare(`
     SELECT
@@ -155,10 +170,10 @@ function groupByCallKind(rows: Array<{ type?: string; call_type?: string }>): st
         .join(", ");
 }
 
-const outgoingByType = groupByCallKind([...dependencies, ...resolvedDependencies]);
+const outgoingByType = groupByCallKind([...visibleDependencies, ...resolvedDependencies]);
 const incomingByType = groupByCallKind(usages);
 
-const unresolvedCallsRaw = dependencies.filter(dep => {
+const unresolvedCallsRaw = visibleDependencies.filter(dep => {
     const isMissingTarget = !dep.node_type;
     const hasResolvedAlternative = resolvedDependencies.some(
         resolved => resolved.via === dep.to_id
@@ -298,7 +313,7 @@ if (includeDependsOn) {
         neighborStats.set(relation.to_id, current);
     }
 }
-for (const row of [...dependencies, ...resolvedDependencies]) {
+for (const row of [...visibleDependencies, ...resolvedDependencies]) {
     const current = neighborStats.get(row.to_id) ?? { score: 0, in: 0, out: 0 };
     current.score += 1;
     current.out += 1;
@@ -398,7 +413,7 @@ const changeImpact = enableImpactScore
     : null;
 
 const archViolations: string[] = [];
-for (const dep of [...dependencies, ...resolvedDependencies]) {
+for (const dep of [...visibleDependencies, ...resolvedDependencies]) {
     const violation = isArchitecturalViolation(targetId, dep.to_id);
     if (violation) {
         archViolations.push(`${targetId} → ${dep.to_id}  [${violation}]`);
@@ -428,7 +443,8 @@ if (jsonOutput) {
         },
         stats: {
             incomingCalls: usages.length,
-            outgoingCalls: dependencies.length,
+            incomingEntryPoints: entryPoints.length,
+            outgoingCalls: visibleDependencies.length,
             extendsCount: extendsRelations.length,
             implementsCount: implementsRelations.length,
             dependsOnOutgoing: dependsOnOutgoing.length,
@@ -437,7 +453,9 @@ if (jsonOutput) {
             archViolations: archViolations.length,
         },
         usages: usages.slice(0, limit),
-        dependencies: dependencies.slice(0, limit),
+        entryPoints: entryPoints.slice(0, limit),
+        graphEntries: graphEntries.slice(0, limit),
+        dependencies: visibleDependencies.slice(0, limit),
         resolvedDependencies: resolvedDependencies.slice(0, limit),
         extendsRelations,
         implementsRelations,
@@ -506,7 +524,8 @@ log(chalk.blue("─────────────────────�
 log(`   node_kind: ${chalk.white(target.type)}`);
 log(
     `   relation_summary: ${chalk.gray("in_calls=")}${chalk.white(usages.length)} ` +
-    `${chalk.gray("out_calls=")}${chalk.white(dependencies.length)} ` +
+    `${chalk.gray("entry_points=")}${chalk.white(entryPoints.length)} ` +
+    `${chalk.gray("out_calls=")}${chalk.white(visibleDependencies.length)} ` +
     `${chalk.gray("extends=")}${chalk.white(extendsRelations.length)} ` +
     `${chalk.gray("implements=")}${chalk.white(implementsRelations.length)} ` +
     `${chalk.gray("depends_out=")}${chalk.white(dependsOnOutgoing.length)} ` +
@@ -573,7 +592,7 @@ if (changeImpact) {
     log(chalk.red("────────────────────────────────────────────────────"));
     log(`   risk: ${chalk.white.bold(String(changeImpact.risk))}`);
     log(`   score: ${chalk.white(String(changeImpact.score))} ${chalk.gray("(relative impact score)")}`);
-    log(`   affected callers: ${chalk.white(String(changeImpact.affectedCallers))}`);
+    log(`   upstream consumers: ${chalk.white(String(changeImpact.affectedCallers))} ${chalk.gray(`(entry points: ${changeImpact.components.directEntryPoints}, call-chain: ${changeImpact.components.directCallChainCallers})`)}`);
     log(`   methods used by target: ${chalk.white(String(changeImpact.methodsUsedByTarget ?? changeImpact.usedDependencies))}`);
     log(`   affected files: ${chalk.white(String(changeImpact.affectedFiles))}`);
     if (verbose && changeImpact.affectedFilesList.length > 0) {
@@ -584,6 +603,7 @@ if (changeImpact) {
     log(`   depth: ${chalk.white(String(changeImpact.depth))}`);
     log("   components:");
     log(`     ${chalk.gray("direct callers:")} ${chalk.white(changeImpact.components.directCallers)} ${chalk.gray("(score:")} ${chalk.white(changeImpact.components.directCallerScore)}${chalk.gray(")")}`);
+    log(`     ${chalk.gray("entry points:")} ${chalk.white(changeImpact.components.directEntryPoints)} ${chalk.gray("call-chain:")} ${chalk.white(changeImpact.components.directCallChainCallers)}`);
     log(`     ${chalk.gray("indirect callers:")} ${chalk.white(changeImpact.components.indirectCallers)} ${chalk.gray("(score:")} ${chalk.white(changeImpact.components.indirectCallerScore)}${chalk.gray(")")}`);
     log(`     ${chalk.gray("direct callees:")} ${chalk.white(changeImpact.components.directCallees)} ${chalk.gray("(score:")} ${chalk.white(changeImpact.components.directCalleeScore)}${chalk.gray(")")}`);
     log(`     ${chalk.gray("dependency links:")} ${chalk.white(changeImpact.components.dependencyLinks)} ${chalk.gray("(score:")} ${chalk.white(changeImpact.components.dependencyScore)}${chalk.gray(")")}`);
@@ -592,14 +612,14 @@ if (changeImpact) {
     log(`     ${chalk.gray("inspected edges:")} ${chalk.white(String(changeImpact.inspectedEdges))}`);
 
     log("");
-    log(chalk.red.bold("Affected callers"));
+    log(chalk.red.bold("Upstream consumers"));
     log(chalk.red("────────────────────────────────────────────────────"));
     if (changeImpact.affectedCallersList.length === 0) {
         log(chalk.gray("   -"));
     } else {
         for (const item of changeImpact.affectedCallersList) {
             log(`   ${chalk.red("•")} ${chalk.white(item.id)}`);
-            log(`     ${chalk.gray("distance:")} ${chalk.white(item.distance)} ${chalk.gray("score:")} ${chalk.white(item.score)}`);
+            log(`     ${chalk.gray("relation:")} ${chalk.white(item.relationType)} ${chalk.gray("distance:")} ${chalk.white(item.distance)} ${chalk.gray("score:")} ${chalk.white(item.score)}`);
         }
     }
 
@@ -617,13 +637,13 @@ if (changeImpact) {
 }
 
 if (
-    usages.length === 0 &&
+    !hasIncomingUsage &&
     target.type === "method" &&
     target.visibility === "public"
 ) {
     log("");
     log(chalk.yellow.bold("⚠️  Potentially unused public method"));
-    log(chalk.yellow("   No internal callers found in this codebase."));
+    log(chalk.yellow("   No internal callers, routes, or blade actions found in this codebase."));
     log(chalk.gray("   Note: public methods may be called from outside the scanned scope"));
     log(chalk.gray("   (e.g. framework routing, external consumers, tests)."));
 }
@@ -776,12 +796,22 @@ if (target.type === "class") {
 }
 log(chalk.green("────────────────────────────────────────────────────"));
 
-if (usages.length === 0) {
-    log(chalk.gray("   No incoming CALLS found."));
+if (!hasIncomingUsage) {
+    log(chalk.gray("   No incoming CALLS, ROUTES_TO, or BLADE_USES_ACTION found."));
     if (target.type === "class" && includeDependsOn) {
         log(chalk.gray(`   Incoming DEPENDS_ON found: ${dependsOnIncoming.length}`));
     }
 } else {
+    for (const entry of entryPoints.slice(0, limit)) {
+        log(
+            `   ${chalk.green("←")} ${chalk.white.bold(formatGraphEntryLabel(entry))}`,
+        );
+        log(
+            `     ${chalk.gray("entry type:")} ${chalk.white(entry.kind === "route" ? "ROUTES_TO" : "BLADE_USES_ACTION")}`,
+        );
+        log("");
+    }
+
     for (const row of usages.slice(0, limit)) {
         log(
             `   ${chalk.green("←")} ${chalk.white.bold(
@@ -828,6 +858,9 @@ if (usages.length === 0) {
     if (usages.length > limit) {
         log(chalk.gray(`   ... ${usages.length - limit} more incoming calls omitted`));
     }
+    if (entryPoints.length > limit) {
+        log(chalk.gray(`   ... ${entryPoints.length - limit} more entry points omitted`));
+    }
 }
 
 log("");
@@ -835,10 +868,10 @@ log("");
 log(chalk.yellow.bold("➡️  What do I use?"));
 log(chalk.yellow("────────────────────────────────────────────────────"));
 
-if (dependencies.length === 0) {
+if (visibleDependencies.length === 0) {
     log(chalk.gray("   No outgoing CALLS found."));
 } else {
-    for (const row of dependencies.slice(0, limit)) {
+    for (const row of visibleDependencies.slice(0, limit)) {
         log(
             `   ${chalk.yellow("→")} ${chalk.white.bold(
                 row.to_id
@@ -907,8 +940,8 @@ if (dependencies.length === 0) {
 
         log("");
     }
-    if (dependencies.length > limit) {
-        log(chalk.gray(`   ... ${dependencies.length - limit} more outgoing calls omitted`));
+    if (visibleDependencies.length > limit) {
+        log(chalk.gray(`   ... ${visibleDependencies.length - limit} more outgoing calls omitted`));
     }
 }
 log(chalk.cyan.bold("════════════════════════════════════════════════════"));

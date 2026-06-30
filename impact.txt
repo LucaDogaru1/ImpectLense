@@ -1,0 +1,124 @@
+
+════════════════════════════════════════════════════
+                  IMPACT REPORT
+════════════════════════════════════════════════════
+
+📍 Selected node
+────────────────────────────────────────────────────
+   App\Http\Controllers\PaymentController::pay
+   Type: method
+   Name: pay
+   Parent: App\Http\Controllers\PaymentController
+   Visibility: public
+   Static: false
+   Location: fixtures/php-laravel/app/Http/Controllers/PaymentController.php:15-42
+
+🧠 Compact summary
+────────────────────────────────────────────────────
+   node_kind: method
+   relation_summary: in_calls=0 entry_points=4 out_calls=3 extends=0 implements=0 depends_out=0 depends_in=0
+   incoming_by_type: -
+   outgoing_by_type: CALLS(2), INTERFACE_RESOLVED(2)
+   include_interface_resolved: true
+   include_depends_on: false
+   limit: 5
+   unresolved calls: 0
+   inherited call resolutions: 0
+   resolved interface calls: 1
+     ↳ App\Contracts\PaymentServiceInterface::process -> App\Services\PaymentService::process
+   inheritance_chain: App\Http\Controllers\PaymentController -> App\Http\Controllers\BaseController
+   contained_methods: 4
+   Most connected nodes:
+     • App\Services\PaymentService::process (score=2, in=0, out=2)
+     • App\Contracts\PaymentServiceInterface::process (score=1, in=0, out=1)
+     • App\Http\Controllers\PaymentController::beforePay (score=1, in=0, out=1)
+
+💥 Change impact scoring
+────────────────────────────────────────────────────
+   risk: HIGH
+   score: 25 (relative impact score)
+   upstream consumers: 4 (entry points: 4, call-chain: 0)
+   methods used by target: 3
+   affected files: 6
+   depth: 2
+   components:
+     direct callers: 4 (score: 19)
+     entry points: 4 call-chain: 0
+     indirect callers: 0 (score: 0)
+     direct callees: 3 (score: 6)
+     dependency links: 0 (score: 0)
+     inheritance links: 0 (score: 0)
+   technical details:
+     inspected edges: 7
+
+Upstream consumers
+────────────────────────────────────────────────────
+   • api:GET:/checkout/pay
+     relation: ROUTES_TO distance: 1 score: 5
+   • api:GET:/v1/payments
+     relation: ROUTES_TO distance: 1 score: 5
+   • api:POST:api/payments
+     relation: ROUTES_TO distance: 1 score: 5
+   • blade:fixtures/php-laravel/resources/views/checkout/pay.blade.php
+     relation: BLADE_USES_ACTION distance: 1 score: 4
+
+What this method uses
+────────────────────────────────────────────────────
+   • App\Contracts\PaymentServiceInterface::process
+     relation: CALLS score: 2
+   • App\Http\Controllers\PaymentController::beforePay
+     relation: CALLS score: 2
+   • App\Services\PaymentService::process
+     relation: CALLS score: 2
+
+🧱 Contained methods
+────────────────────────────────────────────────────
+   - __construct (App\Http\Controllers\PaymentController::__construct)
+   - beforePay (App\Http\Controllers\PaymentController::beforePay)
+   - orphanAction (App\Http\Controllers\PaymentController::orphanAction)
+   - pay (App\Http\Controllers\PaymentController::pay)
+
+⭐ Most important methods
+────────────────────────────────────────────────────
+   - beforePay score=3, in=1, out=2
+   - pay score=3, in=0, out=3
+   - __construct score=0, in=0, out=0
+   - orphanAction score=0, in=0, out=0
+
+
+⬅️  Who uses me?
+────────────────────────────────────────────────────
+   ← GET /checkout/pay [ROUTES_TO]
+     entry type: ROUTES_TO
+
+   ← GET /v1/payments [ROUTES_TO]
+     entry type: ROUTES_TO
+
+   ← POST api/payments [ROUTES_TO]
+     entry type: ROUTES_TO
+
+   ← blade:fixtures/php-laravel/resources/views/checkout/pay.blade.php [BLADE_USES_ACTION]
+     entry type: BLADE_USES_ACTION
+
+
+➡️  What do I use?
+────────────────────────────────────────────────────
+   → App\Contracts\PaymentServiceInterface::process
+     type: method name: process
+     location: fixtures/php-laravel/app/Contracts/PaymentServiceInterface.php:8-8
+     resolved to:
+       ↳ App\Services\PaymentService::process
+         type: method name: process
+         location: fixtures/php-laravel/app/Services/PaymentService.php:19-34
+
+   → App\Http\Controllers\PaymentController::beforePay
+     type: method name: beforePay
+     location: fixtures/php-laravel/app/Http/Controllers/PaymentController.php:44-48
+
+   → App\Services\PaymentService::process
+     call type: INTERFACE_RESOLVED
+     type: method name: process
+     location: fixtures/php-laravel/app/Services/PaymentService.php:19-34
+
+════════════════════════════════════════════════════
+

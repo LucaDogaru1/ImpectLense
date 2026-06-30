@@ -19,6 +19,14 @@ const COMMANDS: Record<string, CommandDef> = {
         script: "commands/ticket.ts",
         description: "Same as ticket",
     },
+    find: {
+        script: "commands/find.ts",
+        description: "Search graph symbols, routes, and fields (alias: analyze:find)",
+    },
+    "analyze:find": {
+        script: "commands/find.ts",
+        description: "Same as find",
+    },
     "ai-context": {
         script: "commands/aiContext.ts",
         description: "Compact report for one symbol (alias: analyze:ai-context)",
@@ -120,6 +128,7 @@ Examples:
   impactlens scan /path/to/repo --lang=both --output=both
   impactlens ticket sqlite/Graph.sqlite --ticket="Hero teaser layout…" --scopes=php,js \\
     --answers=ticket_topic:ui,change_includes:cms_ui --non-interactive
+  impactlens find sqlite/Graph.sqlite PaymentController
   impactlens ai-context sqlite/Graph.sqlite "App\\\\Services\\\\Foo::bar" --compact
 
 List commands only:  impactlens --commands

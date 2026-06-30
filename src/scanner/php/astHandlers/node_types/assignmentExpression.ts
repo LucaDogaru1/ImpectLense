@@ -5,6 +5,9 @@ import { graph } from "../../../../graph/graph";
 import { ensureModelField } from "../../semantic/fieldNodes";
 import { extractNestedArrayFieldEntries } from "../../semantic/nestedArrayFields";
 import { resolveExpressionElementType } from "../../semantic/phpDocPropertyTypes";
+import { resolveExpressionType } from "../../semantic/resolveExpressionType";
+import { propagateDataFlowsFromArgument } from "./DataFlowAssignment";
+import { argumentsNode, rootVariableFromArgument } from "../argumentsNode";
 
 export function assignmentExpression(
     rootNodeChild: Parser.SyntaxNode,
@@ -18,14 +21,28 @@ export function assignmentExpression(
 
     recordModelPropertyArrayShape(left, right, context, file);
 
+    if (left.type === "variable_name") {
+        const sourceVar = getRootVariableName(right.text);
+
+        if (sourceVar) {
+            propagateDataFlowsFromArgument(sourceVar, left.text, context);
+        }
+
+        if (right.type === "object_creation_expression") {
+            propagateDataFlowsFromConstructorArgs(right, left.text, context);
+        }
+    }
+
     const leftKey = normalizeAssignedTarget(left.text);
 
     if (left.type === "variable_name") {
-        const elementType = resolveExpressionElementType(right, context);
+        const resolvedType =
+            resolveExpressionType(right, context) ??
+            resolveExpressionElementType(right, context);
 
-        if (elementType) {
-            context.variableTypes.set(left.text, elementType);
-            context.variableTypes.set(left.text.replace(/^\$/, ""), elementType);
+        if (resolvedType) {
+            context.variableTypes.set(left.text, resolvedType);
+            context.variableTypes.set(left.text.replace(/^\$/, ""), resolvedType);
         }
     }
 
@@ -150,10 +167,36 @@ function resolveArrayLiteralNode(node: Parser.SyntaxNode): Parser.SyntaxNode | n
     return null;
 }
 
+function propagateDataFlowsFromConstructorArgs(
+    creationNode: Parser.SyntaxNode,
+    targetVar: string,
+    context: WalkContext
+): void {
+    const args = argumentsNode(creationNode);
+
+    if (!args) {
+        return;
+    }
+
+    for (const arg of args.namedChildren) {
+        const sourceVar = rootVariableFromArgument(arg);
+
+        if (sourceVar) {
+            propagateDataFlowsFromArgument(sourceVar, targetVar, context);
+        }
+    }
+}
+
 function normalizeAssignedTarget(value: string): string {
     if (value.startsWith("$this->")) {
         return value.replace("$this->", "this.");
     }
 
     return value;
+}
+
+function getRootVariableName(value: string): string | null {
+    const match = value.match(/^\$[a-zA-Z_][a-zA-Z0-9_]*/);
+
+    return match?.[0] ?? null;
 }

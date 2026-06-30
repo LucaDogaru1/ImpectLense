@@ -20,6 +20,8 @@ const options: DeadCodeOptions = {
     ignoreInterfaceMethods: !hasFlag(args, "--no-ignore-interface-methods"),
     ignoreFrameworkMethods: !hasFlag(args, "--no-ignore-framework-methods"),
     ignoreAccessors: !hasFlag(args, "--no-ignore-accessors"),
+    ignoreAbstractImplementations: !hasFlag(args, "--no-ignore-abstract-implementations"),
+    includeExtendsResolved: !hasFlag(args, "--no-include-extends-resolved"),
     ignoreBaseClasses: !hasFlag(args, "--no-ignore-base-classes"),
 };
 
@@ -72,6 +74,7 @@ try {
     log(`   unused public methods: ${chalk.white(result.deadMethods)}`);
     log(`   include depends_on: ${chalk.white(String(includeDependsOn))}`);
     log(`   include interface resolved: ${chalk.white(String(options.includeInterfaceResolved))}`);
+    log(`   include extends/override resolved: ${chalk.white(String(options.includeExtendsResolved))}`);
     log(`   include routes: ${chalk.white(String(options.includeRoutes))}`);
     log(`   include blade refs: ${chalk.white(String(options.includeBladeReferences))}`);
     log(`   showing top: ${chalk.white(limit)}`);
@@ -86,6 +89,7 @@ try {
     log(`   interface methods: ${chalk.white(String(options.ignoreInterfaceMethods))}`);
     log(`   framework methods: ${chalk.white(String(options.ignoreFrameworkMethods))}`);
     log(`   entity accessors: ${chalk.white(String(options.ignoreAccessors))}`);
+    log(`   abstract implementations: ${chalk.white(String(options.ignoreAbstractImplementations))}`);
     log(`   base classes: ${chalk.white(String(options.ignoreBaseClasses))}`);
     log();
 

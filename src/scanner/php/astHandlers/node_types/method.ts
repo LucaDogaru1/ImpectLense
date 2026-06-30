@@ -3,6 +3,7 @@ import { GraphNode } from "../../../../graph/GraphTypes";
 import Parser from "tree-sitter";
 import { WalkContext } from "../../walk/context";
 import {extractNodeKeywords} from "../../resolvers/keyWordExtractor";
+import { extractMethodReturnType } from "../../semantic/returnTypes";
 
 export function methodType(
     rootNodeChild: Parser.SyntaxNode,
@@ -17,6 +18,10 @@ export function methodType(
         child => child.type === "static_modifier"
     );
 
+    const isAbstract = rootNodeChild.children.some(
+        child => child.type === "abstract_modifier"
+    );
+
     const nameNode = rootNodeChild.childForFieldName("name")?.text;
     const parent = context.currentClass ?? context.currentInterface;
 
@@ -25,6 +30,7 @@ export function methodType(
     const methodName = parent + "::" + nameNode;
 
     const keywordData = extractNodeKeywords(rootNodeChild, nameNode);
+    const returnType = extractMethodReturnType(rootNodeChild, context);
 
     graph.nodes.set(methodName, <GraphNode>{
         id: methodName,
@@ -33,6 +39,8 @@ export function methodType(
         name: nameNode,
         file: file,
         isStatic: isStatic,
+        isAbstract: isAbstract,
+        returnType: returnType,
         visibility: visibility,
         startPosition: rootNodeChild.startPosition,
         endPosition: rootNodeChild.endPosition,

@@ -1,8 +1,8 @@
 import Database from "better-sqlite3";
 import fs from "node:fs";
-import { analyzeArchitecture } from "../../analyzers/architecture/ArchitectureAnalyzer";
-import { detectCycles } from "../../analyzers/cycles/CycleAnalyzer";
-import { analyzeChangeImpact } from "../../analyzers/impact/ImpactScoringAnalyzer";
+import { analyzeArchitectureForNodes } from "../../analyzers/architecture/ArchitectureAnalyzer";
+import { detectCyclesFromNodes } from "../../analyzers/cycles/CycleAnalyzer";
+import { analyzeChangeImpact, buildImpactGraphIndex } from "../../analyzers/impact/ImpactScoringAnalyzer";
 import {
     findDependsOnRelations,
     findIncomingCalls,
@@ -16,6 +16,15 @@ import {
 import { formatLocation, toBulletList } from "../../shared/formatting/text";
 import { getIntOption, getOptionValue, hasFlag } from "../shared/cliArgs";
 import { buildRiskRanking } from "../shared/riskRanking";
+import { gatherNavigationContext } from "../../analyzers/navigation/gatherNavigationContext";
+import {
+    filterFrameworkNoise,
+    findRouteControllerMethod,
+    formatGraphEntryLabel,
+    preferConcreteCallTargets,
+    resolveInterfaceMethodImplementation,
+    shortNavigationLabel,
+} from "../../graph/queries/navigationQueries";
 
 type CallItem = {
     id: string;
@@ -36,6 +45,7 @@ type AiContextPayload = {
         id: string;
         type: string;
         location: string | null;
+        resolvesTo?: string | null;
     };
     summary: {
         changeRisk: string;
@@ -44,6 +54,10 @@ type AiContextPayload = {
         riskPopulation: number;
         riskPercentileTop: number | null;
         riskCandidatePool: number;
+        upstreamConsumers: number;
+        entryPoints: number;
+        callChainCallers: number;
+        /** @deprecated use upstreamConsumers */
         affectedCallers: number;
         methodsUsedByTarget: number;
         affectedFiles: number;
@@ -55,6 +69,7 @@ type AiContextPayload = {
         riskDrivers: string[];
     };
     callers: CallItem[];
+    graphEntries: Array<{ kind: string; from: string; to: string; file: string | null }>;
     callees: CallItem[];
     dependencies: DependencyItem[];
     inheritance: string[];
@@ -75,6 +90,19 @@ type AiContextPayload = {
         length: number;
     }>;
     affectedFiles: string[];
+    navigation: {
+        routeEntries: Array<{ endpointId: string; controllerMethod: string }>;
+        bladeEntries: Array<{ bladeViewId: string; controllerMethod: string }>;
+        graphEntries: Array<{ kind: string; from: string; to: string; file: string | null }>;
+        httpUpstream: Array<{ componentId: string; endpointId: string; controllerMethod: string | null }>;
+        fieldAssignments: Array<{ type: string; from: string; to: string; via?: string | null }>;
+        fieldFlowsOut: Array<{ type: string; from: string; to: string; via?: string | null }>;
+        validates: Array<{ type: string; from: string; to: string; via?: string | null }>;
+        persists: Array<{ type: string; from: string; to: string; via?: string | null }>;
+        configRefs: Array<{ type: string; from: string; to: string; via?: string | null }>;
+        warnings: string[];
+        suggestedNext: string[];
+    };
 };
 
 function toShortName(id: string): string {
@@ -82,6 +110,114 @@ function toShortName(id: string): string {
     const className = classPart.split("\\").pop() ?? classPart;
     const method = id.includes("::") ? id.split("::")[1] : "";
     return method ? `${className}::${method}` : className;
+}
+
+function formatFlowEdge(edge: { type: string; from: string; to: string; via?: string | null }): string {
+    const via = edge.via ? ` via ${edge.via}` : "";
+    return `${shortNavigationLabel(edge.from)} → ${shortNavigationLabel(edge.to)} (${edge.type}${via})`;
+}
+
+function renderNavigationSections(payload: AiContextPayload, compact: boolean): string[] {
+    const nav = payload.navigation;
+    const lines: string[] = [];
+
+    lines.push(compact ? "## Navigation" : "## Graph Navigation");
+    lines.push("");
+
+    if (nav.routeEntries.length > 0) {
+        lines.push(compact ? "### Route entry" : "### HTTP entry (ROUTES_TO)");
+        lines.push(toBulletList(nav.routeEntries.map(route =>
+            `${shortNavigationLabel(route.endpointId)} → ${shortNavigationLabel(route.controllerMethod)}`,
+        )));
+        lines.push("");
+    }
+
+    if (nav.bladeEntries.length > 0) {
+        lines.push("### Blade entry (BLADE_USES_ACTION)");
+        lines.push(toBulletList(nav.bladeEntries.map(entry =>
+            `${shortNavigationLabel(entry.bladeViewId)} → ${shortNavigationLabel(entry.controllerMethod)}`,
+        )));
+        lines.push("");
+    }
+
+    if (nav.httpUpstream.length > 0) {
+        lines.push(nav.routeEntries.some(route => route.endpointId === payload.target.id)
+            ? "### HTTP clients (HTTP_REQUEST)"
+            : "### UI upstream (HTTP_REQUEST)");
+        lines.push(toBulletList(nav.httpUpstream.map(item =>
+            `${shortNavigationLabel(item.componentId)} → ${shortNavigationLabel(item.endpointId)}`,
+        )));
+        lines.push("");
+    }
+
+    if (nav.fieldAssignments.length > 0) {
+        lines.push("### Request / field intake (ASSIGNS)");
+        lines.push(toBulletList(nav.fieldAssignments.map(formatFlowEdge)));
+        lines.push("");
+    }
+
+    if (nav.fieldFlowsOut.length > 0) {
+        lines.push("### Field flow to callees (FLOWS_TO / ARGUMENT_TO)");
+        lines.push(toBulletList(nav.fieldFlowsOut.map(formatFlowEdge)));
+        lines.push("");
+    }
+
+    if (nav.validates.length > 0) {
+        lines.push("### Validation");
+        lines.push(toBulletList(nav.validates.map(formatFlowEdge)));
+        lines.push("");
+    }
+
+    if (nav.persists.length > 0) {
+        lines.push("### Persistence (PERSISTS)");
+        lines.push(toBulletList(nav.persists.map(formatFlowEdge)));
+        lines.push("");
+    }
+
+    if (nav.configRefs.length > 0) {
+        lines.push("### Config references");
+        lines.push(toBulletList(nav.configRefs.map(formatFlowEdge)));
+        lines.push("");
+    }
+
+    if (nav.suggestedNext.length > 0) {
+        lines.push("### Suggested next");
+        lines.push(toBulletList(nav.suggestedNext));
+        lines.push("");
+    }
+
+    lines.push("### Graph coverage");
+    lines.push(
+        nav.warnings.length === 0
+            ? "- No obvious navigation gaps detected for this symbol."
+            : toBulletList(nav.warnings),
+    );
+    lines.push("");
+
+    return lines;
+}
+
+function renderCalledBySection(payload: AiContextPayload): string[] {
+    const lines: string[] = ["## Called By", ""];
+
+    const graphEntryFromIds = new Set(
+        payload.graphEntries.filter(entry => entry.kind === "call").map(entry => entry.from),
+    );
+
+    const graphEntryLabels = payload.graphEntries.map(entry => {
+        const fileSuffix = entry.file ? ` (${entry.file})` : "";
+        return `${formatGraphEntryLabel(entry as Parameters<typeof formatGraphEntryLabel>[0])}${fileSuffix}`;
+    });
+
+    const extraCallLabels = payload.callers
+        .filter(item => !graphEntryFromIds.has(item.id))
+        .map(item => item.file ? `${item.id} (${item.file})` : item.id);
+
+    const combined = [...graphEntryLabels, ...extraCallLabels];
+
+    lines.push(combined.length === 0 ? "- None" : toBulletList(combined));
+    lines.push("");
+    return lines;
 }
 
 function dedupeCalls(items: CallItem[], limit: number): CallItem[] {
@@ -103,10 +239,21 @@ function dedupeCalls(items: CallItem[], limit: number): CallItem[] {
     return result;
 }
 
+function formatUpstreamConsumersSummary(summary: AiContextPayload["summary"]): string {
+    const base = `${summary.upstreamConsumers} upstream consumers`;
+    if (summary.entryPoints > 0 || summary.callChainCallers > 0) {
+        return `${base} (entry points: ${summary.entryPoints}, call-chain: ${summary.callChainCallers})`;
+    }
+    return base;
+}
+
 function guessPurpose(
     targetId: string,
     targetType: string,
     callers: CallItem[],
+    callees: CallItem[],
+    routeEntries: Array<{ endpointId: string }>,
+    bladeEntries: Array<{ bladeViewId: string }>,
     dependencies: DependencyItem[],
     summary: AiContextPayload["summary"],
 ): AiContextPayload["purposeGuess"] {
@@ -135,15 +282,20 @@ function guessPurpose(
         likelyResponsibility = "Background job processing";
     }
 
-    const primaryConsumers = Array.from(new Set(callers.map(item => toShortName(item.id)))).slice(0, 5);
-    const mainDependencies = Array.from(new Set(
-        dependencies
+    const primaryConsumers = Array.from(new Set([
+        ...callers.map(item => toShortName(item.id)),
+        ...routeEntries.map(item => shortNavigationLabel(item.endpointId)),
+        ...bladeEntries.map(item => shortNavigationLabel(item.bladeViewId)),
+    ])).slice(0, 5);
+    const mainDependencies = Array.from(new Set([
+        ...dependencies
             .filter(dep => dep.direction === "outgoing")
             .map(dep => toShortName(dep.id)),
-    )).slice(0, 5);
+        ...callees.map(item => toShortName(item.id)),
+    ])).slice(0, 5);
 
     const riskDrivers = [
-        `${summary.affectedCallers} affected callers`,
+        formatUpstreamConsumersSummary(summary),
         `${summary.affectedFiles} affected files`,
     ];
 
@@ -191,6 +343,9 @@ function renderDefaultMarkdown(payload: AiContextPayload): string {
         `- id: ${payload.target.id}`,
         `- type: ${payload.target.type}`,
         `- location: ${payload.target.location ?? "unknown"}`,
+        ...(payload.target.resolvesTo
+            ? [`- resolves to: ${payload.target.resolvesTo}`]
+            : []),
         "",
         "## Summary",
         `- change risk: ${payload.summary.changeRisk}`,
@@ -205,7 +360,7 @@ function renderDefaultMarkdown(payload: AiContextPayload): string {
         `- impact score: ${payload.summary.impactScore}`,
         `- candidate pool: top ${payload.summary.riskCandidatePool} hotspot candidates`,
         `- population: ${payload.summary.riskPopulation} nodes`,
-        `- affected callers: ${payload.summary.affectedCallers}`,
+        `- ${formatUpstreamConsumersSummary(payload.summary)}`,
         `- methods used by target: ${payload.summary.methodsUsedByTarget}`,
         `- affected files: ${payload.summary.affectedFiles}`,
         "",
@@ -221,16 +376,13 @@ function renderDefaultMarkdown(payload: AiContextPayload): string {
         "Risk Drivers:",
         payload.purposeGuess.riskDrivers.length === 0 ? "- None" : toBulletList(payload.purposeGuess.riskDrivers),
         "",
-        "## Called By",
-        payload.callers.length === 0
-            ? "- None"
-            : toBulletList(payload.callers.map(item => item.file ? `${item.id} (${item.file})` : item.id)),
-        "",
+        ...renderCalledBySection(payload),
         "## Calls",
         payload.callees.length === 0
             ? "- None"
             : toBulletList(calls),
         "",
+        ...renderNavigationSections(payload, false),
         "## Dependencies",
         payload.dependencies.length === 0
             ? "- None"
@@ -270,7 +422,6 @@ function renderDefaultMarkdown(payload: AiContextPayload): string {
 }
 
 function renderCompactMarkdown(payload: AiContextPayload): string {
-    const callerIds = payload.callers.map(item => item.id);
     const calleeIds = payload.callees.map(item => item.resolvedTo ? `${item.id} -> ${item.resolvedTo}` : item.id);
     const dependencyIds = payload.dependencies.map(item => `${item.direction}: ${item.id}`);
     const architectureIds = payload.architecture.map(item => {
@@ -284,6 +435,9 @@ function renderCompactMarkdown(payload: AiContextPayload): string {
         "",
         `- target: ${payload.target.id} (${payload.target.type})`,
         `- location: ${payload.target.location ?? "unknown"}`,
+        ...(payload.target.resolvesTo
+            ? [`- resolves to: ${payload.target.resolvesTo}`]
+            : []),
         `- risk: ${payload.summary.changeRisk}`,
         `- risk rank: ${payload.summary.riskRank !== null
             ? `${payload.summary.riskRank}/${payload.summary.riskPopulation}`
@@ -296,7 +450,7 @@ function renderCompactMarkdown(payload: AiContextPayload): string {
         `- impact score: ${payload.summary.impactScore}`,
         `- candidate pool: top ${payload.summary.riskCandidatePool} hotspot candidates`,
         `- population: ${payload.summary.riskPopulation} nodes`,
-        `- affected callers: ${payload.summary.affectedCallers}`,
+        `- ${formatUpstreamConsumersSummary(payload.summary)}`,
         `- methods used by target: ${payload.summary.methodsUsedByTarget}`,
         `- affected files: ${payload.summary.affectedFiles}`,
         "",
@@ -306,12 +460,11 @@ function renderCompactMarkdown(payload: AiContextPayload): string {
         `- main dependencies: ${payload.purposeGuess.mainDependencies.join(", ") || "None"}`,
         `- risk drivers: ${payload.purposeGuess.riskDrivers.join(", ") || "None"}`,
         "",
-        "## Called By",
-        callerIds.length === 0 ? "- None" : toBulletList(callerIds),
-        "",
+        ...renderCalledBySection(payload),
         "## Calls",
         calleeIds.length === 0 ? "- None" : toBulletList(calleeIds),
         "",
+        ...renderNavigationSections(payload, true),
         "## Dependencies",
         dependencyIds.length === 0 ? "- None" : toBulletList(dependencyIds),
         "",
@@ -338,32 +491,52 @@ try {
         process.exit(1);
     }
 
+    const controllerMethodId = target.type === "api_endpoint"
+        ? findRouteControllerMethod(db, target.id)
+        : null;
+    const analysisNodeId = controllerMethodId ?? target.id;
+
     const callers = target.type === "class"
         ? dedupeCalls(
             findMethodsByParent(db, target.id)
                 .flatMap(methodId => findIncomingCalls(db, methodId, { includeInterfaceResolved, limit })),
             limit,
         )
-        : findIncomingCalls(db, target.id, { includeInterfaceResolved, limit });
+        : findIncomingCalls(db, analysisNodeId, { includeInterfaceResolved, limit });
 
-    const callees = target.type === "class"
+    const rawCallees = target.type === "class"
         ? dedupeCalls(
             findMethodsByParent(db, target.id)
                 .flatMap(methodId => findOutgoingCalls(db, methodId, { includeInterfaceResolved, limit })),
             limit,
         )
-        : findOutgoingCalls(db, target.id, { includeInterfaceResolved, limit });
+        : findOutgoingCalls(db, analysisNodeId, { includeInterfaceResolved, limit });
+    const callees = filterFrameworkNoise(
+        preferConcreteCallTargets(rawCallees).slice(0, limit),
+    );
     const relationTargetId = getRelationTargetId(target);
     const inheritance = relationTargetId ? findInheritanceChain(db, relationTargetId) : [];
     const dependencies: DependencyItem[] = includeDependsOn && relationTargetId
         ? findDependsOnRelations(db, relationTargetId, limit)
         : [];
 
-    const changeImpact = analyzeChangeImpact(db, target.id, {
+    const relatedNodeIds = target.type === "class"
+        ? [target.id, ...findMethodsByParent(db, target.id)]
+        : controllerMethodId
+            ? [controllerMethodId]
+            : [target.id];
+
+    const graphIndex = buildImpactGraphIndex(db, {
+        includeDependsOn,
+        includeInterfaceResolved,
+    });
+
+    const changeImpact = analyzeChangeImpact(db, analysisNodeId, {
         includeDependsOn,
         includeInterfaceResolved,
         depth,
         limit,
+        graphIndex,
     });
 
     const riskRanking = buildRiskRanking(db, {
@@ -372,27 +545,22 @@ try {
         depth,
         impactLimit: limit,
         candidatePool: riskCandidatePool,
+        graphIndex,
     });
-    const riskPosition = riskRanking.items.find(item => item.id === target.id);
+    const riskPosition = riskRanking.items.find(item => item.id === analysisNodeId);
 
-    const architecture = analyzeArchitecture(db, {
+    const architectureViolations = analyzeArchitectureForNodes(db, relatedNodeIds, {
         includeDependsOn,
         includeInterfaceResolved,
     });
 
-    const cycles = detectCycles(db, {
+    const cycleItems = detectCyclesFromNodes(db, relatedNodeIds, {
         includeDependsOn,
         includeInterfaceResolved,
+        limit,
     });
 
-    const isTargetRelatedNode = (nodeId: string): boolean => {
-        return nodeId === target.id
-            || (target.type === "class" && nodeId.startsWith(`${target.id}::`))
-            || (target.type === "method" && nodeId === relationTargetId);
-    };
-
-    const filteredArchitecture = architecture.violations
-        .filter(violation => isTargetRelatedNode(violation.fromId) || isTargetRelatedNode(violation.toId))
+    const filteredArchitecture = architectureViolations
         .slice(0, limit)
         .map(violation => ({
             severity: violation.severity,
@@ -405,8 +573,7 @@ try {
             falsePositiveReason: violation.falsePositiveReason,
         }));
 
-    const filteredCycles = cycles.cycles
-        .filter(cycle => cycle.nodes.some(nodeId => isTargetRelatedNode(nodeId)))
+    const filteredCycles = cycleItems
         .slice(0, limit)
         .map(cycle => ({
             nodes: cycle.nodes,
@@ -415,11 +582,35 @@ try {
             length: cycle.length,
         }));
 
+    const navigation = gatherNavigationContext(db, target, {
+        limit,
+        callersCount: callers.length,
+        callees: callees.map(item => item.id),
+        includeInterfaceResolved,
+    });
+
+    const calleeItems = callees.map(item => {
+        const isMissingTarget = !item.file;
+        const resolvedTo = isMissingTarget
+            ? resolveMethodThroughInheritance(db, item.id)
+            : item.id.includes("Interface")
+                ? resolveInterfaceMethodImplementation(db, item.id)
+                : null;
+        return {
+            id: item.id,
+            callType: item.callType,
+            via: item.via,
+            file: item.file,
+            resolvedTo: resolvedTo && resolvedTo !== item.id ? resolvedTo : undefined,
+        };
+    });
+
     const payload: AiContextPayload = {
         target: {
             id: target.id,
             type: target.type,
             location: formatLocation(target.file, target.start_row, target.end_row),
+            resolvesTo: controllerMethodId,
         },
         summary: {
             changeRisk: changeImpact.risk,
@@ -428,6 +619,9 @@ try {
             riskPopulation: riskRanking.population,
             riskPercentileTop: riskPosition?.percentileTop ?? null,
             riskCandidatePool,
+            upstreamConsumers: changeImpact.affectedCallers,
+            entryPoints: changeImpact.components.directEntryPoints,
+            callChainCallers: changeImpact.components.directCallChainCallers,
             affectedCallers: changeImpact.affectedCallers,
             methodsUsedByTarget: changeImpact.methodsUsedByTarget,
             affectedFiles: changeImpact.affectedFiles,
@@ -436,6 +630,9 @@ try {
             target.id,
             target.type,
             callers.map(item => ({ id: item.id, callType: item.callType, via: item.via, file: item.file })),
+            calleeItems,
+            navigation.routeEntries,
+            navigation.bladeEntries,
             dependencies,
             {
                 changeRisk: changeImpact.risk,
@@ -444,6 +641,9 @@ try {
                 riskPopulation: riskRanking.population,
                 riskPercentileTop: riskPosition?.percentileTop ?? null,
                 riskCandidatePool,
+                upstreamConsumers: changeImpact.affectedCallers,
+                entryPoints: changeImpact.components.directEntryPoints,
+                callChainCallers: changeImpact.components.directCallChainCallers,
                 affectedCallers: changeImpact.affectedCallers,
                 methodsUsedByTarget: changeImpact.methodsUsedByTarget,
                 affectedFiles: changeImpact.affectedFiles,
@@ -455,22 +655,14 @@ try {
             via: item.via,
             file: item.file,
         })),
-        callees: callees.map(item => {
-            const isMissingTarget = !item.file;
-            const resolvedTo = isMissingTarget ? resolveMethodThroughInheritance(db, item.id) : null;
-            return {
-                id: item.id,
-                callType: item.callType,
-                via: item.via,
-                file: item.file,
-                resolvedTo: resolvedTo && resolvedTo !== item.id ? resolvedTo : undefined,
-            };
-        }),
+        graphEntries: navigation.graphEntries,
+        callees: calleeItems,
         dependencies,
         inheritance,
         architecture: filteredArchitecture,
         cycles: filteredCycles,
         affectedFiles: changeImpact.affectedFilesList,
+        navigation,
     };
 
     if (jsonOutput) {

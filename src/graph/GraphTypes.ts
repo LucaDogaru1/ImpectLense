@@ -20,6 +20,8 @@ export interface GraphNode {
     name: string;
     file?: string;
     isStatic?: boolean;
+    isAbstract?: boolean;
+    returnType?: string;
     visibility?: string;
     startPosition?: Parser.Point;
     endPosition?: Parser.Point;

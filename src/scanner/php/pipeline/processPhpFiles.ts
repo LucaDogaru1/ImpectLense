@@ -4,6 +4,10 @@ import {ScannedPhpFile} from "../scanPhp";
 import Parser from "tree-sitter";
 import {WalkContext} from "../walk/context";
 import {resolveInterfaceCalls} from "../resolvers/resolveInterfaceCalls";
+import {resolveExtendsCalls} from "../resolvers/resolveExtendsCalls";
+import {resolveOverrideCalls} from "../resolvers/resolveOverrideCalls";
+import {pruneExternalExtendsEdges} from "../resolvers/pruneExternalExtends";
+import {resolveBladeMethodCalls} from "../resolvers/resolveBladeMethodCalls";
 import {resolveArgumentEdges} from "../resolvers/resolveArgumentEdges";
 import {
     extractRoutesFromRouteFile,
@@ -134,6 +138,10 @@ export function processPhpFiles(files: ScannedPhpFile[], parser: Parser) {
     const resolveProgress = createScanProgress({ label: "PHP resolve" });
     resolveProgress.start();
     resolveInterfaceCalls();
+    pruneExternalExtendsEdges();
+    resolveExtendsCalls();
+    resolveOverrideCalls();
+    resolveBladeMethodCalls();
     resolveArgumentEdges();
     resolveProgress.done();
 

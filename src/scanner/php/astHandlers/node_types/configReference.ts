@@ -106,12 +106,21 @@ function extractFirstStringArgument(node: Parser.SyntaxNode): string | null {
         return null;
     }
 
-    for (const child of args.namedChildren) {
-        if (child.type === "string" || child.type === "encapsed_string") {
-            const value = cleanPhpString(child.text);
-            if (value) {
-                return value;
-            }
+    return findFirstStringValue(args);
+}
+
+function findFirstStringValue(node: Parser.SyntaxNode): string | null {
+    if (node.type === "string" || node.type === "encapsed_string") {
+        const value = cleanPhpString(node.text);
+
+        return value || null;
+    }
+
+    for (const child of node.namedChildren) {
+        const value = findFirstStringValue(child);
+
+        if (value) {
+            return value;
         }
     }
 

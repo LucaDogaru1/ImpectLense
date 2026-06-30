@@ -104,4 +104,22 @@ export function scanBladeFile(file: string, content: string): void {
             type: "BLADE_REFERENCES_SYMBOL",
         });
     }
+
+    for (const match of content.matchAll(/\$([a-zA-Z_][\w]*)->([a-zA-Z_][\w]*)\s*\(/g)) {
+        const methodName = match[2]!;
+        const refId = `blade_method_ref:${methodName}`;
+
+        graph.nodes.set(refId, {
+            id: refId,
+            type: "blade_method_ref",
+            name: methodName,
+        });
+
+        graph.edges.set(`${viewId}->${refId}:BLADE_METHOD_CALL`, {
+            from: viewId,
+            to: refId,
+            type: "BLADE_METHOD_CALL",
+            via: match[1],
+        });
+    }
 }

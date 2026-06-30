@@ -1,8 +1,15 @@
 import Database from "better-sqlite3";
+import { isIncomingEntryEdgeType } from "../../graph/queries/graphEntryPoints";
 
 type SQLiteDatabase = InstanceType<typeof Database>;
 
-type RelationType = "CALLS" | "DEPENDS_ON" | "EXTENDS" | "IMPLEMENTS";
+type RelationType =
+    | "CALLS"
+    | "DEPENDS_ON"
+    | "EXTENDS"
+    | "IMPLEMENTS"
+    | "ROUTES_TO"
+    | "BLADE_USES_ACTION";
 type Orientation = "incoming" | "outgoing";
 
 export interface ChangeImpactOptions {
@@ -11,6 +18,13 @@ export interface ChangeImpactOptions {
     depth?: number;
     limit?: number;
     decay?: number;
+    graphIndex?: ImpactGraphIndex;
+}
+
+export interface ImpactGraphIndex {
+    incomingByNode: Map<string, EdgeRow[]>;
+    outgoingByNode: Map<string, EdgeRow[]>;
+    getNodeFile: (id: string) => string | null;
 }
 
 export interface ImpactNodeScore {
@@ -26,6 +40,7 @@ export interface ImpactCaller {
     distance: number;
     score: number;
     file: string | null;
+    relationType: RelationType;
 }
 
 export interface UsedDependency {
@@ -37,6 +52,8 @@ export interface UsedDependency {
 
 export interface ChangeImpactComponents {
     directCallers: number;
+    directCallChainCallers: number;
+    directEntryPoints: number;
     indirectCallers: number;
     directCallees: number;
     dependencyLinks: number;
@@ -102,6 +119,14 @@ const BASE_WEIGHTS: Record<RelationType, Record<Orientation, number>> = {
     IMPLEMENTS: {
         incoming: 2,
         outgoing: 2,
+    },
+    ROUTES_TO: {
+        incoming: 5,
+        outgoing: 0,
+    },
+    BLADE_USES_ACTION: {
+        incoming: 4,
+        outgoing: 0,
     },
 };
 
@@ -178,9 +203,13 @@ function traverseUpstream(
                     distance,
                     score: 0,
                     file: getNodeFile(callerId),
+                    relationType: relation.type,
                 };
                 existing.score += contribution;
                 existing.distance = Math.min(existing.distance, distance);
+                if (existing.relationType !== relation.type && existing.score === contribution) {
+                    existing.relationType = relation.type;
+                }
                 state.affectedCallersMap.set(callerId, existing);
                 state.impactedNodeSet.add(callerId);
 
@@ -241,21 +270,17 @@ function collectUsedByTarget(
     }
 }
 
-export function analyzeChangeImpact(
+export function buildImpactGraphIndex(
     db: SQLiteDatabase,
-    targetId: string,
-    options?: ChangeImpactOptions,
-): ChangeImpactResult {
-    const depth = clampPositiveInt(options?.depth, 2);
-    const limit = clampPositiveInt(options?.limit, 8);
-    const decay = Number.isFinite(options?.decay) ? Math.max(0.1, Math.min(1, Number(options?.decay))) : 0.6;
+    options?: Pick<ChangeImpactOptions, "includeDependsOn" | "includeInterfaceResolved">,
+): ImpactGraphIndex {
     const includeDependsOn = options?.includeDependsOn ?? false;
     const includeInterfaceResolved = options?.includeInterfaceResolved ?? false;
 
     const edgeRows = db.prepare(`
         SELECT from_id, to_id, type, call_type
         FROM edges
-        WHERE type IN ('CALLS', 'EXTENDS', 'IMPLEMENTS')
+        WHERE type IN ('CALLS', 'EXTENDS', 'IMPLEMENTS', 'ROUTES_TO', 'BLADE_USES_ACTION')
            OR (? = 1 AND type = 'DEPENDS_ON')
     `).all(includeDependsOn ? 1 : 0) as EdgeRow[];
 
@@ -278,12 +303,6 @@ export function analyzeChangeImpact(
         incomingByNode.set(edge.to_id, toList);
     }
 
-    const targetNode = db.prepare(`
-        SELECT id, type
-        FROM nodes
-        WHERE id = ?
-    `).get(targetId) as { id: string; type: string } | undefined;
-
     const getNodeFileStmt = db.prepare(`
         SELECT file
         FROM nodes
@@ -301,11 +320,25 @@ export function analyzeChangeImpact(
         return file;
     };
 
+    return { incomingByNode, outgoingByNode, getNodeFile };
+}
+
+export function analyzeChangeImpactWithIndex(
+    index: ImpactGraphIndex,
+    targetId: string,
+    options?: ChangeImpactOptions,
+): ChangeImpactResult {
+    const depth = clampPositiveInt(options?.depth, 2);
+    const limit = clampPositiveInt(options?.limit, 8);
+    const decay = Number.isFinite(options?.decay) ? Math.max(0.1, Math.min(1, Number(options?.decay))) : 0.6;
+
     const state: TraversalState = {
         affectedCallersMap: new Map<string, ImpactCaller>(),
         usedByTargetMap: new Map<string, UsedDependency>(),
         components: {
             directCallers: 0,
+            directCallChainCallers: 0,
+            directEntryPoints: 0,
             indirectCallers: 0,
             directCallees: 0,
             dependencyLinks: 0,
@@ -324,13 +357,13 @@ export function analyzeChangeImpact(
         inspectedEdges: 0,
     };
 
-    const targetFile = getNodeFile(targetId);
+    const targetFile = index.getNodeFile(targetId);
     if (targetFile) {
         state.affectedFileSet.add(targetFile);
     }
 
-    traverseUpstream(targetId, incomingByNode, depth, decay, getNodeFile, state);
-    collectUsedByTarget(targetId, outgoingByNode, getNodeFile, state);
+    traverseUpstream(targetId, index.incomingByNode, depth, decay, index.getNodeFile, state);
+    collectUsedByTarget(targetId, index.outgoingByNode, index.getNodeFile, state);
 
     const affectedCallersList = Array.from(state.affectedCallersMap.values())
         .sort((a, b) => b.score - a.score || a.distance - b.distance || a.id.localeCompare(b.id))
@@ -343,6 +376,12 @@ export function analyzeChangeImpact(
         .map(item => ({ ...item, score: Number(item.score.toFixed(2)) }));
 
     state.components.directCallers = Array.from(state.affectedCallersMap.values()).filter(item => item.distance === 1).length;
+    state.components.directCallChainCallers = Array.from(state.affectedCallersMap.values())
+        .filter(item => item.distance === 1 && item.relationType === "CALLS")
+        .length;
+    state.components.directEntryPoints = Array.from(state.affectedCallersMap.values())
+        .filter(item => item.distance === 1 && isIncomingEntryEdgeType(item.relationType))
+        .length;
     state.components.indirectCallers = Array.from(state.affectedCallersMap.values()).filter(item => item.distance > 1).length;
     state.components.directCallees = state.usedByTargetMap.size;
     state.components.dependencyLinks = state.dependencyEdgeSet.size;
@@ -375,7 +414,7 @@ export function analyzeChangeImpact(
 
     return {
         targetId,
-        targetType: targetNode?.type ?? "unknown",
+        targetType: "unknown",
         depth,
         inspectedEdges: state.inspectedEdges,
         impactedNodes: state.impactedNodeSet.size,
@@ -388,6 +427,8 @@ export function analyzeChangeImpact(
         risk: computeRisk(score),
         components: {
             directCallers: state.components.directCallers,
+            directCallChainCallers: state.components.directCallChainCallers,
+            directEntryPoints: state.components.directEntryPoints,
             indirectCallers: state.components.indirectCallers,
             directCallees: state.components.directCallees,
             dependencyLinks: state.components.dependencyLinks,
@@ -402,6 +443,24 @@ export function analyzeChangeImpact(
         usedByTargetList,
         topImpactedNodes,
     };
+}
+
+export function analyzeChangeImpact(
+    db: SQLiteDatabase,
+    targetId: string,
+    options?: ChangeImpactOptions,
+): ChangeImpactResult {
+    const index = options?.graphIndex ?? buildImpactGraphIndex(db, options);
+
+    const targetNode = db.prepare(`
+        SELECT id, type
+        FROM nodes
+        WHERE id = ?
+    `).get(targetId) as { id: string; type: string } | undefined;
+
+    const result = analyzeChangeImpactWithIndex(index, targetId, options);
+    result.targetType = targetNode?.type ?? "unknown";
+    return result;
 }
 
 

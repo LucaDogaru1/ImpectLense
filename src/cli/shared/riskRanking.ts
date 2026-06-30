@@ -1,6 +1,10 @@
 import Database from "better-sqlite3";
 import { analyzeHotspots } from "../../analyzers/hotspots/HotspotAnalyzer";
-import { analyzeChangeImpact } from "../../analyzers/impact/ImpactScoringAnalyzer";
+import {
+    analyzeChangeImpactWithIndex,
+    buildImpactGraphIndex,
+    type ImpactGraphIndex,
+} from "../../analyzers/impact/ImpactScoringAnalyzer";
 
 export type RiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
@@ -28,6 +32,7 @@ export interface RiskRankingOptions {
     depth: number;
     impactLimit: number;
     candidatePool: number;
+    graphIndex?: ImpactGraphIndex;
 }
 
 const riskOrder: Record<RiskLevel, number> = {
@@ -38,6 +43,11 @@ const riskOrder: Record<RiskLevel, number> = {
 };
 
 export function buildRiskRanking(db: SQLiteDatabase, options: RiskRankingOptions): RiskRankingResult {
+    const graphIndex = options.graphIndex ?? buildImpactGraphIndex(db, {
+        includeDependsOn: options.includeDependsOn,
+        includeInterfaceResolved: options.includeInterfaceResolved,
+    });
+
     const hotspotResult = analyzeHotspots(db, {
         includeDependsOn: options.includeDependsOn,
         includeInterfaceResolved: options.includeInterfaceResolved,
@@ -60,7 +70,7 @@ export function buildRiskRanking(db: SQLiteDatabase, options: RiskRankingOptions
 
     const items: RankedRiskItem[] = [];
     for (const [id, hotspotScore] of hotspotCandidates) {
-        const impact = analyzeChangeImpact(db, id, {
+        const impact = analyzeChangeImpactWithIndex(graphIndex, id, {
             includeDependsOn: options.includeDependsOn,
             includeInterfaceResolved: options.includeInterfaceResolved,
             depth: options.depth,

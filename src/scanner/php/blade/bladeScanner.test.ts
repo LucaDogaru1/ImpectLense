@@ -15,6 +15,7 @@ const sample = `
 <x-button />
 {{ route('login') }}
 {{ action([LoginController::class, 'logout']) }}
+@php $title = $page->getTitle(); @endphp
 `;
 
 scanBladeFile("resources/views/auth/login.blade.php", sample);
@@ -45,6 +46,10 @@ assert(
         edge => edge.type === "BLADE_USES_ACTION" && edge.to === "LoginController::logout"
     ),
     "BLADE_USES_ACTION missing"
+);
+assert(
+    edges.some(edge => edge.type === "BLADE_METHOD_CALL" && edge.to === "blade_method_ref:getTitle"),
+    "BLADE_METHOD_CALL missing"
 );
 
 console.log("All bladeScanner tests passed.");

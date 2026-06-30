@@ -1,5 +1,31 @@
 import { graph } from "../../../graph/graph";
 
+function argumentToEdgeKey(
+    from: string,
+    to: string,
+    argumentIndex: number,
+    via?: string | null,
+): string {
+    return `${from}->${to}:ARGUMENT_TO:${argumentIndex}:${via ?? ""}`;
+}
+
+function removeArgumentToDuplicates(
+    from: string,
+    to: string,
+    argumentIndex: number,
+): void {
+    for (const [key, edge] of graph.edges.entries()) {
+        if (
+            edge.type === "ARGUMENT_TO" &&
+            edge.from === from &&
+            edge.to === to &&
+            edge.argumentIndex === argumentIndex
+        ) {
+            graph.edges.delete(key);
+        }
+    }
+}
+
 export function resolveArgumentEdges(): void {
     for (const flowEdge of graph.edges.values()) {
         if (flowEdge.type !== "FLOWS_TO") continue;
@@ -8,13 +34,20 @@ export function resolveArgumentEdges(): void {
         const targetMethod = flowEdge.to;
         const targetParameterId = findParameterByIndex(
             targetMethod,
-            flowEdge.argumentIndex
+            flowEdge.argumentIndex,
         );
 
         if (!targetParameterId) continue;
 
+        removeArgumentToDuplicates(flowEdge.from, targetParameterId, flowEdge.argumentIndex);
+
         graph.edges.set(
-            `${flowEdge.from}->${targetParameterId}:ARGUMENT_TO:${flowEdge.argumentIndex}:${flowEdge.via ?? ""}`,
+            argumentToEdgeKey(
+                flowEdge.from,
+                targetParameterId,
+                flowEdge.argumentIndex,
+                flowEdge.via,
+            ),
             {
                 from: flowEdge.from,
                 to: targetParameterId,
@@ -23,14 +56,14 @@ export function resolveArgumentEdges(): void {
                 argumentIndex: flowEdge.argumentIndex,
                 confidence: flowEdge.confidence ?? 1,
                 reason: "Derived from FLOWS_TO edge and target method parameter index",
-            }
+            },
         );
     }
 }
 
 function findParameterByIndex(
     methodId: string,
-    argumentIndex: number
+    argumentIndex: number,
 ): string | null {
     for (const edge of graph.edges.values()) {
         if (
